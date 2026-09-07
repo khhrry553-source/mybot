@@ -14,7 +14,7 @@ import grpc
 TOKEN = os.getenv("BOT_TOKEN", "8844579780:AAHI93U8a0StTBhwuCEbZJR7qzHpy2BdS3g")
 bot = telebot.TeleBot(TOKEN)
 
-# ضع آيدي الأدمن الخاص بك هنا (يمكنك إضافة أكثر من آيدي مفصولين بفواصل أو عبر المتغيرات البيئية)
+# آيدي الأدمن (يمكنك تعديله أو وضعه عبر المتغيرات البيئية)
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "8795120325").split(",") if x.strip().isdigit()]
 
 SUBS_FILE = "subscribers.json"
@@ -48,9 +48,6 @@ def is_active_subscriber(user_id):
         expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d %H:%M:%S")
         if datetime.now() < expiry_date:
             return True
-        else:
-            # انتهى الاشتراكات
-            pass
     return False
 
 # ══════════════════════════════════════════════════════════
@@ -263,9 +260,9 @@ def _gen_phone(cc):
     pref = random.choice(c["prefs"])
     ext = ''.join(str(random.randint(0, 9)) for _ in range(c["ext"]))
     local = pref + ext
-    return c["code"] + "-" + local, "0" + local
+    # إرجاع الرقم متصلاً بدون شرطات ليتوافق مع الخادم
+    return c["code"] + local, "0" + local
 
-# تخزين حالات وحلقات الفحص المستقلة لكل مستخدم على حدة (عدم دمج الفحص)
 user_scanners = {}
 user_states = {}
 
@@ -275,19 +272,19 @@ def get_main_keyboard(chat_id, running=False):
     
     if not running:
         markup.add(
-            InlineKeyboardButton("فحص سعودية", callback_data="start_sa"),
-            InlineKeyboardButton("فحص عراقي", callback_data="start_iq")
+            InlineKeyboardButton("🚀 بدء الفحص الجماعي (SA)", callback_data="start_sa"),
+            InlineKeyboardButton("🚀 بدء الفحص الجماعي (IQ)", callback_data="start_iq")
         )
         markup.add(
-            InlineKeyboardButton("فحص حساب مفرد", callback_data="single_check_menu")
+            InlineKeyboardButton("🔍 فحص حساب مفرد", callback_data="single_check_menu")
         )
     else:
         markup.add(
-            InlineKeyboardButton("ايقاف الفحص", callback_data="stop_checker")
+            InlineKeyboardButton("⏹ إيقاف الفحص الخاص بي", callback_data="stop_checker")
         )
         
     if is_admin:
-        markup.add(InlineKeyboardButton("تحكم الادمن", callback_data="admin_panel"))
+        markup.add(InlineKeyboardButton("⚙️ لوحة تحكم الأدمن", callback_data="admin_panel"))
         
     return markup
 
@@ -313,9 +310,6 @@ def send_welcome(message):
         parse_mode="Markdown"
     )
 
-# ══════════════════════════════════════════════════════════
-#  أوامر الأدمن (تفعيل / حذف مشترك)
-# ══════════════════════════════════════════════════════════
 @bot.message_handler(commands=['add'])
 def cmd_add_sub(message):
     if message.from_user.id not in ADMIN_IDS:
@@ -402,7 +396,7 @@ def callback_query(call):
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=call.message.message_id,
-            text="🔍 **وضع فحص حساب مفرد**\n\nأرسل الآن الحساب بالصيغة التالية:\n`رقم_الهاتف:كلمة_المرور`\n\n*(مثال: `966501234567:Aa123456@`)*",
+            text="🔍 **وضع فحص حساب مفرد**\n\nأرسل الآن الحساب بالصيغة التالية:\n`رقم_الهاتف:كلمة_المرور`\n\n*(مثال: `9647718221131:Aa123456@`)*",
             reply_markup=markup,
             parse_mode="Markdown"
         )
@@ -425,8 +419,6 @@ def callback_query(call):
             return
         
         cc = data.split("_")[1].upper()
-        
-        # إنشاء نافذة وحالة خاصة مستقلة تماماً لهذا المستخدم فقط
         user_scanners[chat_id] = {
             "is_running": True,
             "checked": 0,
@@ -470,7 +462,9 @@ def handle_text_messages(message):
             return
 
         parts = text.split(":", 1)
-        raw_phone = parts[0].strip().replace("+", "")
+        # تنظيف الرقم وإزالة الرموز والشرطات للحصول على الأرقام الصافية فقط
+        raw_phone = parts[0].strip().replace("+", "").replace("-", "")
+        raw_phone = "".join(filter(str.isdigit, raw_phone))
         password = parts[1].strip()
 
         country = "SA"
@@ -478,19 +472,18 @@ def handle_text_messages(message):
 
         if raw_phone.startswith("966"):
             country = "SA"
-            formatted_phone = raw_phone[:3] + "-" + raw_phone[3:]
         elif raw_phone.startswith("964"):
             country = "IQ"
-            formatted_phone = raw_phone[:3] + "-" + raw_phone[3:]
         elif raw_phone.startswith("20"):
             country = "EG"
-            formatted_phone = raw_phone[:2] + "-" + raw_phone[2:]
         elif raw_phone.startswith("0") or len(raw_phone) == 9:
             country = "SA"
-            local = raw_phone[1:] if raw_phone.startswith("0") else raw_phone
-            formatted_phone = "966-" + local
+            if raw_phone.startswith("0"):
+                formatted_phone = "966" + raw_phone[1:]
+            else:
+                formatted_phone = "966" + raw_phone
 
-        wait_msg = bot.reply_to(message, f"⏳ جاري فحص الحساب [دولة: {country}]...")
+        wait_msg = bot.reply_to(message, f"⏳ جاري فحص الحساب [دولة: {country}] الرقم: `{formatted_phone}`...")
 
         def process_single():
             cli = GrpcClient()
@@ -499,7 +492,7 @@ def handle_text_messages(message):
                 data, err = cli.call(cli._login, payload)
                 
                 if err or not data:
-                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text="❌ **فشل الاتصال بالخادم أو خطأ في الشبكة.**", parse_mode="Markdown")
+                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"❌ **فشل الاتصال أو خطأ في الشبكة (رمز الخطأ: {err})**", parse_mode="Markdown")
                     cli.close()
                     return
 
@@ -539,7 +532,6 @@ def handle_text_messages(message):
 
         threading.Thread(target=process_single, daemon=True).start()
 
-# حلقة فحص مستقلة خاصة بكل مستخدم (تمنع التداخل نهائياً)
 def run_user_scanner(chat_id, message_id, cc):
     cli = GrpcClient()
     last_update_time = 0
@@ -616,5 +608,5 @@ def run_user_scanner(chat_id, message_id, cc):
         pass
 
 if __name__ == "__main__":
-    print("Bot is running with Admin system and isolated user sessions...")
+    print("Bot is running with fully cleaned phone formatting and isolated sessions...")
     bot.infinity_polling()
