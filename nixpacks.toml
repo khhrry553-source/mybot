@@ -1,0 +1,5 @@
+Enter[phases.setup]
+nixPkgs = ["python3", "gcc", "g++", "libffi", "openssl"]
+
+[phases.build]
+cmds = ["pip install --no-cache-dir --prefer-binary -r requirements.txt"]
