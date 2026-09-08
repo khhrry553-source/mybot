@@ -145,20 +145,23 @@ def _fget(fields, n):
 def _sim_info():
     return (_fint(1,454) + _fstr(2,"00") + _fstr(3,"HK") + _fstr(4,"CSL") + _fstr(5,"CSL"))
 
-# تم تحديث الدالة لفصل مفتاح الدولة عن رقم الهاتف لمنع تكرار البيانات وخطأ param error
+# 🛠️ الهيكل الصحيح لمنع param error وتوافق معايير خادم PhoneLogin
 def _build_login(phone, password, cc):
     c = COUNTRY_MAP.get(cc, COUNTRY_MAP["SA"])
     numeric_code = c["code"]
     
-    # استخراج الجزء المحلي من الرقم (إزالة مفتاح الدولة إذا كان موجوداً في بداية الرقم)
+    # استخراج الجزء المحلي من الرقم بدون مفتاح الدولة
     local_phone = phone
     if phone.startswith(numeric_code):
         local_phone = phone[len(numeric_code):]
         
-    return (_fstr(1, local_phone) + 
-            _fstr(2, hashlib.md5(password.encode()).hexdigest()) + 
-            _fstr(5, numeric_code) + 
-            _fbytes(6, _sim_info()))
+    return (
+        _fstr(1, numeric_code) +                            # Field 1: رمز الدولة
+        _fstr(2, local_phone) +                             # Field 2: رقم الهاتف المحلي
+        _fstr(3, hashlib.md5(password.encode()).hexdigest()) + # Field 3: كلمة المرور (MD5)
+        _fint(4, 1) +                                       # Field 4: نوع تسجيل الدخول
+        _fbytes(5, _sim_info())                             # Field 5: معلومات الشريحة
+    )
 
 def _rand_hex(n):
     return ''.join(random.choices('0123456789abcdef', k=n))
@@ -666,5 +669,5 @@ def run_user_scanner(chat_id, msg_id, cc):
     except: pass
 
 if __name__ == "__main__":
-    print("Bot is running with separated country code and local phone number parsing...")
+    print("Bot is running with correct field ordering for gRPC PhoneLogin...")
     bot.infinity_polling()
