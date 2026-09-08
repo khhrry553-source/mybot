@@ -11,7 +11,7 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import grpc
 
-TOKEN = os.getenv("BOT_TOKEN", "8844579780:AAHI93U8a0StTBhwuCEbZJR7qzHpy2BdS3g")
+TOKEN = os.getenv("BOT_TOKEN", "8844579780:AAFDxl5UZRA64eHcoxboAUfp7hkE1XVD8jA")
 bot = telebot.TeleBot(TOKEN)
 
 # آيدي الأدمن
@@ -145,11 +145,20 @@ def _fget(fields, n):
 def _sim_info():
     return (_fint(1,454) + _fstr(2,"00") + _fstr(3,"HK") + _fstr(4,"CSL") + _fstr(5,"CSL"))
 
-# تم تعديل الدالة هنا لإرسال رمز الدولة الرقمي (مثل 966) بدلاً من الحرفي (SA) لتجنب param error
+# تم تحديث الدالة لفصل مفتاح الدولة عن رقم الهاتف لمنع تكرار البيانات وخطأ param error
 def _build_login(phone, password, cc):
     c = COUNTRY_MAP.get(cc, COUNTRY_MAP["SA"])
     numeric_code = c["code"]
-    return (_fstr(1, phone) + _fstr(2, hashlib.md5(password.encode()).hexdigest()) + _fstr(5, numeric_code) + _fbytes(6, _sim_info()))
+    
+    # استخراج الجزء المحلي من الرقم (إزالة مفتاح الدولة إذا كان موجوداً في بداية الرقم)
+    local_phone = phone
+    if phone.startswith(numeric_code):
+        local_phone = phone[len(numeric_code):]
+        
+    return (_fstr(1, local_phone) + 
+            _fstr(2, hashlib.md5(password.encode()).hexdigest()) + 
+            _fstr(5, numeric_code) + 
+            _fbytes(6, _sim_info()))
 
 def _rand_hex(n):
     return ''.join(random.choices('0123456789abcdef', k=n))
@@ -657,5 +666,5 @@ def run_user_scanner(chat_id, msg_id, cc):
     except: pass
 
 if __name__ == "__main__":
-    print("Bot is running with corrected numeric country code for gRPC login...")
+    print("Bot is running with separated country code and local phone number parsing...")
     bot.infinity_polling()
