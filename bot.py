@@ -142,25 +142,25 @@ def _fget(fields, n):
         if f[0] == n: return f
     return None
 
-# 🛠️ تعديل معلومات الشريحة لتكون نص UTF-8 صالح تماماً
 def _sim_info():
     return "454,00,HK,CSL,CSL"
 
-# 🛠️ الهيكل الصحيح لمنع أخطاء الـ UTF-8 وتوافق معايير خادم PhoneLogin
+# 🛠️ تعديل الحقل الأول ليكون رقماً صحيحاً (Int) لمنع param error
 def _build_login(phone, password, cc):
     c = COUNTRY_MAP.get(cc, COUNTRY_MAP["SA"])
-    numeric_code = c["code"]
+    numeric_code = int(c["code"])
     
+    str_code = str(numeric_code)
     local_phone = phone
-    if phone.startswith(numeric_code):
-        local_phone = phone[len(numeric_code):]
+    if phone.startswith(str_code):
+        local_phone = phone[len(str_code):]
         
     return (
-        _fstr(1, numeric_code) +                             # Field 1: رمز الدولة
-        _fstr(2, local_phone) +                              # Field 2: رقم الهاتف المحلي
-        _fstr(3, hashlib.md5(password.encode()).hexdigest()) + # Field 3: كلمة المرور (MD5)
-        _fint(4, 1) +                                        # Field 4: نوع تسجيل الدخول
-        _fstr(5, _sim_info())                                # Field 5: معلومات الشريحة كنص UTF-8 صالح
+        _fint(1, numeric_code) +                             # Field 1: رمز الدولة (رقم صحيح Int)
+        _fstr(2, local_phone) +                              # Field 2: رقم الهاتف المحلي (نص String)
+        _fstr(3, hashlib.md5(password.encode()).hexdigest()) + # Field 3: كلمة المرور MD5 (نص String)
+        _fint(4, 1) +                                        # Field 4: نوع تسجيل الدخول (رقم صحيح Int)
+        _fstr(5, _sim_info())                                # Field 5: معلومات الشريحة (نص String)
     )
 
 def _rand_hex(n):
@@ -669,5 +669,5 @@ def run_user_scanner(chat_id, msg_id, cc):
     except: pass
 
 if __name__ == "__main__":
-    print("Bot is running with correct string field UTF-8 encoding for PhoneLogin...")
+    print("Bot is running with correct integer Field(1) for PhoneLogin...")
     bot.infinity_polling()
