@@ -20,7 +20,7 @@ SUBS_FILE = "subscribers.json"
 
 # ══════════════════════════════════════════════════════════
 #  إدارة الاشتراكات وقاعدة البيانات المحلية
-# ══════════════════════════════════════════════════════════[span_3](start_span)[span_3](end_span)
+# ══════════════════════════════════════════════════════════
 def load_subs():
     if not os.path.exists(SUBS_FILE):
         return {}
@@ -50,8 +50,8 @@ def is_active_subscriber(user_id):
     return False
 
 # ══════════════════════════════════════════════════════════
-#  XOR obfuscation & Configs (محدثة بدقة عالية)
-# ══════════════════════════════════════════════════════════[span_4](start_span)[span_4](end_span)
+#  XOR obfuscation & Configs
+# ══════════════════════════════════════════════════════════
 def _xd(b):
     return bytes(c ^ 0x5A for c in b).decode()
 
@@ -66,7 +66,7 @@ PKG        = _xd(_pkg)
 APP_VER    = "2003003"
 APP_VN     = "2.3.3.1"
 
-# قائمة الكلمات الـ 51 كاملة لضمان دقة الفحص القصوى
+# قائمة الكلمات الـ 51 كاملة
 PASSWORDS = [
     "Aa123456@","Aa123456","Aa12345678","Aa12345678@",
     "Aa1234567@","Aa1234567","Aa123123@","Aa123123",
@@ -169,7 +169,6 @@ def _make_meta(did):
     ]
 
 class GrpcClient:
-    """عميل gRPC مع دعم إعادة الاتصال التلقائي وإدارة الحص حصة (Keepalive)""[span_5](start_span)"[span_5](end_span)
     def __init__(self):
         self.did = _rand_hex(16)
         self._init_channel()
@@ -200,7 +199,6 @@ class GrpcClient:
             if code in (grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.RESOURCE_EXHAUSTED, grpc.StatusCode.INTERNAL):
                 time.sleep(0.5)
                 try:
-                    # إعادة تهيئة الاتصال تلقائياً عند السقوط المفاجئ
                     self._init_channel()
                     resp = stub(payload, metadata=meta, timeout=timeout)
                     return resp, None
@@ -212,27 +210,29 @@ class GrpcClient:
         try: self._ch.close()
         except: pass
 
+# تم تعديل هذه الدالة لتكون دقيقة وآمنة تماماً في قراءة الردود عبر Protobuf
 def _parse_login(data):
     if not data: return {"status": "error"}
-    fn, wt = data[0] >> 3, data[0] & 7
-    if fn == 2 and wt == 0:
-        top = _proto(data)
-        r = {"ok": True, "status": "hit", "uid": "", "token": "", "country": "", "shortUID": 0}
-        f = _fget(top, 2)
-        if f: r["shortUID"] = f[2]
-        for fld_n in (3, 4):
-            f = _fget(top, fld_n)
-            if f and f[3]:
-                s = f[3].decode(errors="ignore")
-                s_clean = "".join(c for c in s if c.isalnum() or c in "_-.")
-                if len(s_clean) >= 20 and not r["token"]: 
-                    r["token"] = s_clean
-        f = _fget(top, 8)
-        if f and f[3]: r["country"] = f[3].decode(errors="replace")
-        f = _fget(top, 10)
-        if f and f[3]:
-            s = f[3].decode(errors="replace")
+    top = _proto(data)
+    r = {"ok": False, "status": "fail", "uid": "", "token": "", "country": "", "shortUID": 0}
+    
+    for fn, wt, iv, bv in top:
+        if fn == 2 and wt == 0:
+            r["shortUID"] = iv
+        elif fn in (3, 4) and wt == 2 and bv:
+            s = bv.decode(errors="ignore")
+            s_clean = "".join(c for c in s if c.isalnum() or c in "_-.")
+            if len(s_clean) >= 20 and not r["token"]: 
+                r["token"] = s_clean
+        elif fn == 8 and wt == 2 and bv:
+            r["country"] = bv.decode(errors="replace")
+        elif fn == 10 and wt == 2 and bv:
+            s = bv.decode(errors="replace")
             if s.isdigit(): r["uid"] = s
+
+    if r["token"] or r["shortUID"] or r["uid"]:
+        r["ok"] = True
+        r["status"] = "hit"
         return r
     return {"status": "fail"}
 
