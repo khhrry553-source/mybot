@@ -185,27 +185,53 @@ class GrpcClient:
         except: pass
 
 def _parse_login(data):
-    if not data: return {"status": "error"}
-    fn, wt = data[0] >> 3, data[0] & 7
-    if fn == 2 and wt == 0:
-        top = _proto(data)
-        r = {"ok": True, "status": "hit", "uid": "", "token": "", "country": "", "shortUID": 0}
-        f = _fget(top, 2)
-        if f: r["shortUID"] = f[2]
-        for fld_n in (3, 4):
-            f = _fget(top, fld_n)
-            if f and f[3]:
+    if not data: 
+        return {"status": "error"}
+    
+    top = _proto(data)
+    r = {"ok": False, "status": "fail", "uid": "", "token": "", "country": "", "shortUID": 0}
+    
+    # البحث عن الـ shortUID
+    f = _fget(top, 2)
+    if f and f[1] == 0:
+        r["shortUID"] = f[2]
+
+    # البحث عن التوكن (Token) في الحقول المتاحة
+    for fld_n in (3, 4, 5, 6):
+        f = _fget(top, fld_n)
+        if f and f[3]:
+            try:
                 s = f[3].decode(errors="ignore")
                 s_clean = "".join(c for c in s if c.isalnum() or c in "_-.")
                 if len(s_clean) >= 20 and not r["token"]: 
                     r["token"] = s_clean
-        f = _fget(top, 8)
-        if f and f[3]: r["country"] = f[3].decode(errors="replace")
-        f = _fget(top, 10)
-        if f and f[3]:
+            except:
+                pass
+
+    # البحث عن الدولة
+    f = _fget(top, 8)
+    if f and f[3]: 
+        try:
+            r["country"] = f[3].decode(errors="replace")
+        except:
+            pass
+
+    # البحث عن الـ UID الأساسي
+    f = _fget(top, 10)
+    if f and f[3]:
+        try:
             s = f[3].decode(errors="replace")
-            if s.isdigit(): r["uid"] = s
+            if s.isdigit(): 
+                r["uid"] = s
+        except:
+            pass
+
+    # إذا تم العثور على أي مؤشر نجاح (مثل التوكن أو الـ UID)، نعتبره صيداً صحيحاً (Hit)
+    if r["token"] or r["shortUID"] or r["uid"]:
+        r["ok"] = True
+        r["status"] = "hit"
         return r
+
     return {"status": "fail"}
 
 def _find_vip(data):
