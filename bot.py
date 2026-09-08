@@ -541,14 +541,19 @@ def handle_text_messages(message):
 
         wait_msg = bot.reply_to(message, f"⏳ جاري فحص الحساب [دولة: {country}] الرقم: `{formatted_phone}`...")
 
-        def process_single():
+                def process_single():
             cli = GrpcClient()
             try:
                 payload = _build_login(formatted_phone, password, country)
                 data, err = cli.call(cli._login, payload)
                 
                 if err or not data:
-                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"❌ **فشل الاتصال أو رفض الطلب!**\n🔍 **{res.get}`", parse_mode="Markdown")
+                    bot.edit_message_text(
+                        chat_id=chat_id, 
+                        message_id=wait_msg.message_id, 
+                        text=f"❌ **فشل الاتصال أو رفض الطلب!**\n🔍 **الخطأ: {err}**", 
+                        parse_mode="Markdown"
+                    )
                     cli.close()
                     return
 
@@ -580,11 +585,17 @@ def handle_text_messages(message):
                     hit_msg += f"{'─'*32}"
                     bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=hit_msg, parse_mode="Markdown")
                 else:
-                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"❌ **الحساب خطأ أو كلمة المرور غير صحيحة!**\nالرقم: `{formatted_phone}\n\n{res.get}`", parse_mode="Markdown")
+                    bot.edit_message_text(
+                        chat_id=chat_id, 
+                        message_id=wait_msg.message_id, 
+                        text=f"❌ **الحساب خطأ أو كلمة المرور غير صحيحة!**\nالرقم: `{formatted_phone}`", 
+                        parse_mode="Markdown"
+                    )
             except Exception as e:
                 bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"⚠️ خطأ استثنائي أثناء المعالجة: `{str(e)}`", parse_mode="Markdown")
             finally:
                 cli.close()
+
 
         threading.Thread(target=process_single, daemon=True).start()
 
