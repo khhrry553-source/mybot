@@ -145,8 +145,11 @@ def _fget(fields, n):
 def _sim_info():
     return (_fint(1,454) + _fstr(2,"00") + _fstr(3,"HK") + _fstr(4,"CSL") + _fstr(5,"CSL"))
 
-def _build_login(phone, password, country):
-    return (_fstr(1, phone) + _fstr(2, hashlib.md5(password.encode()).hexdigest()) + _fstr(5, country) + _fbytes(6, _sim_info()))
+# تم تعديل الدالة هنا لإرسال رمز الدولة الرقمي (مثل 966) بدلاً من الحرفي (SA) لتجنب param error
+def _build_login(phone, password, cc):
+    c = COUNTRY_MAP.get(cc, COUNTRY_MAP["SA"])
+    numeric_code = c["code"]
+    return (_fstr(1, phone) + _fstr(2, hashlib.md5(password.encode()).hexdigest()) + _fstr(5, numeric_code) + _fbytes(6, _sim_info()))
 
 def _rand_hex(n):
     return ''.join(random.choices('0123456789abcdef', k=n))
@@ -212,7 +215,6 @@ class GrpcClient:
         try: self._ch.close()
         except: pass
 
-# استخراج تفاصيل السبب بالكامل من استجابة السيرفر عند الفشل
 def _extract_error_details(data):
     if not data:
         return "استجابة فارغة تماماً من السيرفر (None)"
@@ -514,7 +516,6 @@ def handle_text(message):
                 payload = _build_login(phone, pw_part.strip(), country)
                 data, err = cli.call(cli._login, payload)
                 
-                # إذا حدث خطأ في اتصال الـ gRPC
                 if err:
                     bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, 
                                           text=f"❌ **خطأ في الاتصال (gRPC Error):**\n`{err}`", parse_mode="Markdown")
@@ -532,7 +533,6 @@ def handle_text(message):
                                f"💎 الذهب: `{acct.get('gold', 0)}`")
                     bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=hit_txt, parse_mode="Markdown")
                 else:
-                    # طباعة سبب الرفض أو تفاصيل الاستجابة بالكامل للمستخدم
                     raw_details = res.get("raw_details", "غير متوفر")
                     fail_txt = (f"❌ **فشل تسجيل الدخول (الحساب خطأ أو غير مسجل):**\n\n"
                                 f"• الرقم: `{phone}`\n"
@@ -657,5 +657,5 @@ def run_user_scanner(chat_id, msg_id, cc):
     except: pass
 
 if __name__ == "__main__":
-    print("Bot is running with detailed error extraction and gRPC stability...")
+    print("Bot is running with corrected numeric country code for gRPC login...")
     bot.infinity_polling()
