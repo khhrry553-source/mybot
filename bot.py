@@ -18,7 +18,7 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ضع توكن البوت الخاص بك هنا
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
+BOT_TOKEN = "8844579780:AAFDxl5UZRA64eHcoxboAUfp7hkE1XVD8jA"
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ══════════════════════════════════════════════════════════
