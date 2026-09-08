@@ -145,18 +145,17 @@ def _fget(fields, n):
 def _sim_info():
     return "454,00,HK,CSL,CSL"
 
-# 🛠️ تعديل الحقل الأول ليكون رقماً صحيحاً (Int) لمنع param error
+# 🛠️ تصحيح الحقل الأول ليكون نصاً (String) بناءً على طلب السيرفر
 def _build_login(phone, password, cc):
     c = COUNTRY_MAP.get(cc, COUNTRY_MAP["SA"])
-    numeric_code = int(c["code"])
+    str_code = c["code"]
     
-    str_code = str(numeric_code)
     local_phone = phone
     if phone.startswith(str_code):
         local_phone = phone[len(str_code):]
         
     return (
-        _fint(1, numeric_code) +                             # Field 1: رمز الدولة (رقم صحيح Int)
+        _fstr(1, str_code) +                                 # Field 1: رمز الدولة (نص String)
         _fstr(2, local_phone) +                              # Field 2: رقم الهاتف المحلي (نص String)
         _fstr(3, hashlib.md5(password.encode()).hexdigest()) + # Field 3: كلمة المرور MD5 (نص String)
         _fint(4, 1) +                                        # Field 4: نوع تسجيل الدخول (رقم صحيح Int)
@@ -669,5 +668,5 @@ def run_user_scanner(chat_id, msg_id, cc):
     except: pass
 
 if __name__ == "__main__":
-    print("Bot is running with correct integer Field(1) for PhoneLogin...")
+    print("Bot is running with string Field(1) for PhoneLogin...")
     bot.infinity_polling()
