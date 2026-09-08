@@ -196,6 +196,8 @@ class GrpcClient:
             return resp, None
         except grpc.RpcError as e:
             code = e.code()
+            details = e.details()
+            err_msg = f"{code.name}: {details}"
             if code in (grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.RESOURCE_EXHAUSTED, grpc.StatusCode.INTERNAL):
                 time.sleep(0.5)
                 try:
@@ -204,17 +206,39 @@ class GrpcClient:
                     return resp, None
                 except Exception:
                     pass
-            return None, str(code.name)
+            return None, err_msg
 
     def close(self):
         try: self._ch.close()
         except: pass
 
-# تم تعديل هذه الدالة لتكون دقيقة وآمنة تماماً في قراءة الردود عبر Protobuf
+# استخراج تفاصيل السبب بالكامل من استجابة السيرفر عند الفشل
+def _extract_error_details(data):
+    if not data:
+        return "استجابة فارغة تماماً من السيرفر (None)"
+    details = []
+    try:
+        top = _proto(data)
+        for fn, wt, iv, bv in top:
+            if wt == 0:
+                details.append(f"Field({fn}): IntVal={iv}")
+            elif wt == 2 and bv:
+                try:
+                    txt = bv.decode(errors="ignore").strip()
+                    if txt:
+                        details.append(f"Field({fn}): Text='{txt}'")
+                    else:
+                        details.append(f"Field({fn}): BytesLen={len(bv)}")
+                except:
+                    details.append(f"Field({fn}): BinaryData")
+    except Exception as e:
+        details.append(f"خطأ في تحليل البايتات: {str(e)}")
+    return " | ".join(details) if details else "لا توجد حقول واضحة في استجابة السيرفر"
+
 def _parse_login(data):
-    if not data: return {"status": "error"}
+    if not data: return {"status": "error", "reason": "استجابة فارغة"}
     top = _proto(data)
-    r = {"ok": False, "status": "fail", "uid": "", "token": "", "country": "", "shortUID": 0}
+    r = {"ok": False, "status": "fail", "uid": "", "token": "", "country": "", "shortUID": 0, "raw_details": _extract_error_details(data)}
     
     for fn, wt, iv, bv in top:
         if fn == 2 and wt == 0:
@@ -234,7 +258,7 @@ def _parse_login(data):
         r["ok"] = True
         r["status"] = "hit"
         return r
-    return {"status": "fail"}
+    return r
 
 def _find_vip(data):
     for fn, wt, iv, bv in _proto(data):
@@ -483,15 +507,19 @@ def handle_text(message):
             country = "SA"
             phone = "966" + (phone[1:] if phone.startswith("0") else phone)
 
-        wait_msg = bot.reply_to(message, f"⏳ جاري فحص الحساب `{phone}` بدقة...")
+        wait_msg = bot.reply_to(message, f"⏳ جاري فحص الحساب `{phone}` بدقة واستخراج تفاصيل الاستجابة...")
         def single_run():
             cli = GrpcClient()
             try:
                 payload = _build_login(phone, pw_part.strip(), country)
                 data, err = cli.call(cli._login, payload)
-                if err or not data:
-                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=f"❌ فشل الاتصال: `{err}`", parse_mode="Markdown")
+                
+                # إذا حدث خطأ في اتصال الـ gRPC
+                if err:
+                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, 
+                                          text=f"❌ **خطأ في الاتصال (gRPC Error):**\n`{err}`", parse_mode="Markdown")
                     return
+                
                 res = _parse_login(data)
                 if res.get("status") == "hit":
                     acct = _fetch_info(cli, res.get("shortUID", 0), res.get("token", ""))
@@ -504,7 +532,12 @@ def handle_text(message):
                                f"💎 الذهب: `{acct.get('gold', 0)}`")
                     bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=hit_txt, parse_mode="Markdown")
                 else:
-                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text="❌ الحساب خطأ أو كلمة المرور غير صحيحة.", parse_mode="Markdown")
+                    # طباعة سبب الرفض أو تفاصيل الاستجابة بالكامل للمستخدم
+                    raw_details = res.get("raw_details", "غير متوفر")
+                    fail_txt = (f"❌ **فشل تسجيل الدخول (الحساب خطأ أو غير مسجل):**\n\n"
+                                f"• الرقم: `{phone}`\n"
+                                f"• سبب الرفض / الاستجابة الخام من السيرفر:\n`{raw_details}`")
+                    bot.edit_message_text(chat_id=chat_id, message_id=wait_msg.message_id, text=fail_txt, parse_mode="Markdown")
             finally:
                 cli.close()
         threading.Thread(target=single_run, daemon=True).start()
@@ -562,6 +595,7 @@ def run_combo_scanner(chat_id, msg_id, file_path):
                    f"• فحص: `{state['checked']} / {total}`\n"
                    f"• Hits: `{state['hits']}` 🎯\n"
                    f"• أخطاء: `{state['errors']}` ⚠️\n"
+                   f"• آخر سبب خطأ شبكة: `{state['last_error']}`\n"
                    f"• السرعة: `{spd:.1f} فحص/ثانية` ⚡")
             try:
                 bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=txt, reply_markup=get_main_keyboard(chat_id, True), parse_mode="Markdown")
@@ -607,6 +641,7 @@ def run_user_scanner(chat_id, msg_id, cc):
                            f"• فحص: `{state['checked']}`\n"
                            f"• Hits: `{state['hits']}` 🎯\n"
                            f"• أخطاء: `{state['errors']}` ⚠️\n"
+                           f"• آخر سبب خطأ شبكة: `{state['last_error']}`\n"
                            f"• السرعة: `{spd:.1f} فحص/ثانية` ⚡")
                     try:
                         bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=txt, reply_markup=get_main_keyboard(chat_id, True), parse_mode="Markdown")
@@ -622,5 +657,5 @@ def run_user_scanner(chat_id, msg_id, cc):
     except: pass
 
 if __name__ == "__main__":
-    print("Bot is running with enhanced gRPC stability and maximum accuracy...")
+    print("Bot is running with detailed error extraction and gRPC stability...")
     bot.infinity_polling()
