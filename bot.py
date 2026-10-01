@@ -3,7 +3,8 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import imageio_ffmpeg
 
-TOKEN = os.environ.get("8786365418:AAEtGT918auV2atStisf4j9Qv3qeFGIp_sI")
+# تعيين التوكن مباشرة هنا لتجنب أي مشاكل في قراءته من المنصة
+TOKEN = "8786365418:AAEtGT918auV2atStisf4j9Qv3qeFGIp_sI"
 bot = telebot.TeleBot(TOKEN)
 
 TEMP_DIR = "downloads"
@@ -35,10 +36,9 @@ def handle_video(message):
 
         bot.edit_message_text("⚙️ جاري رفع دقة الفيديو وضبط الإطارات (60 FPS)...", message.chat.id, msg.message_id)
 
-        # الحصول على مسار FFmpeg المدمج تلقائياً داخل بايثون (بدون الحاجة لتثبيته في السيرفر)
+        # الحصول على مسار FFmpeg المدمج تلقائياً عبر بايثون
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
 
-        # أمر المعالجة باستخدام مسار ffmpeg البرمجي
         import subprocess
         command = [
             ffmpeg_exe, '-y', '-i', input_path,
@@ -72,7 +72,6 @@ def handle_video(message):
         bot.reply_to(message, f"❌ حدث خطأ أثناء معالجة الفيديو:\n`{str(e)}`")
     
     finally:
-        # تنظيف الملفات المؤقتة
         if input_path and os.path.exists(input_path):
             os.remove(input_path)
         if output_path and os.path.exists(output_path):
