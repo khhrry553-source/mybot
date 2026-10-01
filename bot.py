@@ -4,7 +4,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import imageio_ffmpeg
 
 # تعيين التوكن مباشرة هنا لتجنب أي مشاكل في قراءته من المنصة
-TOKEN = "8786365418:AAEtGT918auV2atStisf4j9Qv3qeFGIp_sI"
+TOKEN = "8786365418:AAFhRMXC-cYelDMbmGrwPk6GSHE0RQRjrTY"
 bot = telebot.TeleBot(TOKEN)
 
 TEMP_DIR = "downloads"
